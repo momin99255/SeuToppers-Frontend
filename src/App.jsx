@@ -199,8 +199,12 @@ function AuthRouter({ page, go, login, notify, busy }) {
 
 function AuthFrame({ kicker, title, children, go }) {
   return <main className="auth-page">
-    <section className="auth-showcase">
-      <button className="brand brand-large" onClick={() => go('login')}><span className="brand-mark"><Sparkles size={20}/></span><span>Seu<span>Toppers</span></span></button>
+    <section className="auth-showcase"><button className="brand brand-large" onClick={() => go('login')}>
+  <span className="brand-mark">
+    <img src="/SeuToppersFavicon.png" alt="SeuToppers" />
+  </span>
+      <span>Seu<span>Toppers</span></span>
+    </button>
       <div className="showcase-copy">
         <span className="eyebrow"><span className="eyebrow-dot"/> SEU student network</span>
         <h1>One account.<br/><em>Every learning path.</em></h1>
@@ -1598,7 +1602,25 @@ function SkeletonCards({ count = 4 }) { return Array.from({ length: count }).map
 function EmptyState({ icon: Icon, title, text }) { return <div className="empty-state"><div className="empty-icon"><Icon size={22}/></div><h3>{title}</h3><p>{text}</p></div> }
 function Modal({ title, children, onClose }) { return <div className="modal-backdrop" onMouseDown={e => e.target === e.currentTarget && onClose()}><div className="modal"><div className="modal-head"><h2>{title}</h2><button className="icon-btn" onClick={onClose}><X size={18}/></button></div>{children}</div></div> }
 function NotificationPanel({ items, markRead, markAll }) { return <div className="notification-panel"><div className="notification-head"><b>Notifications</b><button className="link" onClick={markAll}>Mark all read</button></div>{items.length ? items.slice(0, 7).map(x => <button className={`notification-item ${x.read ? '' : 'unread'}`} key={x.id} onClick={() => markRead(x.id)}><div className="notification-dot"><Bell size={14}/></div><div><b>{x.title}</b><p>{x.text}</p><small>{formatDate(x.createdAt)}</small></div></button>) : <p className="muted notification-empty">No activity notifications yet.</p>}<small className="notification-note">Persistent server-side notifications are not exposed by the current backend.</small></div> }
-function Brand({ onClick }) { return <button className="brand" onClick={onClick}><span className="brand-mark"><Sparkles size={18}/></span><span>Seu<span>Toppers</span></span></button> }
+
+
+function Brand({ onClick }) {
+  return (
+      <button className="brand" onClick={onClick}>
+      <span className="brand-mark">
+        <img
+            src="/SeuToppersFavicon.png"
+            alt="SeuToppers"
+        />
+      </span>
+
+        <span>
+        Seu<span>Toppers</span>
+      </span>
+      </button>
+  )
+}
+
 function SettingsIcon() { return <Pencil size={17}/> }
 function Field({ label, value, onChange, type = 'text', placeholder, required, ...rest }) { return <label className="field"><span>{label}</span><input type={type} value={value ?? ''} onChange={onChange} placeholder={placeholder} required={required} {...rest}/></label> }
 function PasswordField({ label, value, onChange, required }) { const [show, setShow] = useState(false); return <label className="field"><span>{label}</span><div className="password-wrap"><input type={show ? 'text' : 'password'} value={value} onChange={onChange} required={required}/><button type="button" onClick={() => setShow(!show)}>{show ? 'Hide' : 'Show'}</button></div></label> }

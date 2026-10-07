@@ -222,11 +222,19 @@ export const api = {
 export function fileUrl(value) {
     if (!value) return ''
 
-    if (/^https?:\/\//i.test(value)) {
-        return value
+    if (typeof value === 'object') {
+        value =
+            value.secure_url ||
+            value.secureUrl ||
+            value.url ||
+            value.path ||
+            ''
     }
 
-    const origin = BASE.replace(/\/api$/, '')
+    if (typeof value !== 'string') return ''
 
+    if (/^https?:\/\//i.test(value)) return value
+
+    const origin = BASE.replace(/\/api$/, '')
     return `${origin}${value.startsWith('/') ? value : `/${value}`}`
 }
