@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react'
+
 import {
   ArrowRight, Bell, BookOpen, CalendarDays, Check, ChevronDown, ChevronRight, CircleDollarSign,
   ClipboardList, Clock3, FileText, GraduationCap, Home, LayoutDashboard, LogIn, LogOut,
@@ -54,25 +55,92 @@ function useHashPage(defaultPage) {
   return [page, go]
 }
 
-function useNotifications() {
-  const key = 'seutoppers_notifications'
-  const [items, setItems] = useState(() => {
-    try { return JSON.parse(localStorage.getItem(key) || '[]') } catch { return [] }
-  })
-  const add = (title, text) => {
-    const next = [{ id: crypto.randomUUID(), title, text, createdAt: new Date().toISOString(), read: false }, ...items].slice(0, 30)
-    setItems(next)
-    localStorage.setItem(key, JSON.stringify(next))
+function useNotifications(auth) {
+  const [items, setItems] = useState([])
+  const [loading, setLoading] = useState(true)
+
+  const loadNotifications = async () => {
+    if (!auth?.userId || !localStorage.getItem('seutoppers_token')) {
+      setItems([])
+      setLoading(false)
+      return
+    }
+
+    try {
+      const data = await api.notifications()
+      setItems(Array.isArray(data) ? data : [])
+    } catch (error) {
+      console.error('Failed to load notifications:', error)
+    } finally {
+      setLoading(false)
+    }
   }
-  const markRead = id => {
-    const next = items.map(x => x.id === id ? { ...x, read: true } : x)
-    setItems(next); localStorage.setItem(key, JSON.stringify(next))
+
+  useEffect(() => {
+    if (!auth?.userId) {
+      setItems([])
+      setLoading(false)
+      return
+    }
+
+    loadNotifications()
+
+    const interval = setInterval(() => {
+      loadNotifications()
+    }, 5000)
+
+    const handleVisibility = () => {
+      if (!document.hidden) {
+        loadNotifications()
+      }
+    }
+
+    document.addEventListener('visibilitychange', handleVisibility)
+
+    return () => {
+      clearInterval(interval)
+      document.removeEventListener('visibilitychange', handleVisibility)
+    }
+  }, [auth?.userId])
+
+  const markRead = async id => {
+    try {
+      await api.markNotificationRead(id)
+
+      setItems(prev =>
+          prev.map(item =>
+              item.id === id
+                  ? { ...item, read: true }
+                  : item
+          )
+      )
+    } catch (error) {
+      console.error('Failed to mark notification as read:', error)
+    }
   }
-  const markAll = () => {
-    const next = items.map(x => ({ ...x, read: true }))
-    setItems(next); localStorage.setItem(key, JSON.stringify(next))
+
+  const markAll = async () => {
+    try {
+      await api.markAllNotificationsRead()
+
+      setItems(prev =>
+          prev.map(item => ({
+            ...item,
+            read: true
+          }))
+      )
+    } catch (error) {
+      console.error('Failed to mark all notifications as read:', error)
+    }
   }
-  return { items, add, markRead, markAll }
+
+  return {
+    items,
+    loading,
+    markRead,
+    markAll,
+    refresh: loadNotifications
+  }
 }
 
 function useLoad(loader, deps = []) {
@@ -91,7 +159,7 @@ export default function App() {
   const [page, go] = useHashPage(auth ? 'dashboard' : 'login')
   const [toast, setToast] = useState('')
   const [loading, setLoading] = useState(false)
-  const notifications = useNotifications()
+  const notifications = useNotifications(auth)
 
   useEffect(() => {
     document.title = loading ? `Loading • ${APP}` : `${APP}`
@@ -588,14 +656,144 @@ function TeacherProfileView({ teacher, onBack, auth }) {
 }
 
 function RequestsPage({ auth, go, notify, busy }) {
-  const open = useLoad(api.openRequests, []), mine = useLoad(api.myRequests, [auth.role])
-  const [active, setActive] = useState('open'), [interests, setInterests] = useState({}), [message, setMessage] = useState(''), [selectedRequest, setSelectedRequest] = useState(null), [booking, setBooking] = useState(null)
-  const list = active === 'mine' ? mine.data || [] : open.data || []
-  const loadInterests = async requestId => { try { const value = await api.interests(requestId); setInterests(x => ({ ...x, [requestId]: value })) } catch (e) { notify(e.message) } }
-  const showInterests = async requestId => { await loadInterests(requestId); setSelectedRequest(requestId) }
-  const sendInterest = async id => { try { await busy(() => api.interest(id, message)); setMessage(''); notify('Interest submitted. The student can now review your details.'); open.reload() } catch (e) { notify(e.message) } }
-  const selectTeacher = async (id, teacherId) => { try { await busy(() => api.selectTeacher(id, teacherId)); notify('Teacher selected. You can now create the class booking.'); mine.reload(); setSelectedRequest(null) } catch (e) { notify(e.message) } }
-  return <div className="page-stack"><PageHero title="Help requests" subtitle={auth.role === 'TEACHER' ? 'Explore open requests and respond when your expertise matches.' : 'Post the topic and time you need help with.'} action={auth.role !== 'TEACHER' ? { label: 'Post a request', onClick: () => go('create-request') } : null}/><div className="tabs"><button className={active === 'open' ? 'active' : ''} onClick={() => setActive('open')}>Open requests</button><button className={active === 'mine' ? 'active' : ''} onClick={() => setActive('mine')}>My requests</button></div><div className="request-grid">{list.map(item => <RequestCard key={item.id} item={item} role={auth.role} onInterest={() => sendInterest(item.id)} onShowInterests={() => showInterests(item.id)} message={message} setMessage={setMessage} onBook={() => setBooking(item)}/>)}</div>{!list.length && !(open.loading || mine.loading) && <EmptyState icon={MessageCircle} title="Nothing here yet" text={active === 'mine' ? 'You have not posted any help requests.' : 'No open help requests are available.'}/>} {selectedRequest && <InterestModal requestId={selectedRequest} interests={interests[selectedRequest] || []} onClose={() => setSelectedRequest(null)} onSelect={selectTeacher}/>} {booking && <BookingModal request={booking} onClose={() => setBooking(null)} onDone={() => { setBooking(null); mine.reload() }}/>}</div>
+  const open = useLoad(api.openRequests, [])
+  const mine = useLoad(api.myRequests, [auth.role])
+
+  const [active, setActive] = useState('open')
+  const [interests, setInterests] = useState({})
+  const [message, setMessage] = useState('')
+  const [selectedRequest, setSelectedRequest] = useState(null)
+  const [booking, setBooking] = useState(null)
+
+  const rawList = active === 'mine' ? mine.data : open.data
+
+  const list = Array.isArray(rawList)
+      ? rawList
+      : Array.isArray(rawList?.content)
+          ? rawList.content
+          : Array.isArray(rawList?.data)
+              ? rawList.data
+              : []
+
+  const loadInterests = async requestId => {
+    try {
+      const value = await api.interests(requestId)
+      setInterests(x => ({ ...x, [requestId]: value }))
+    } catch (e) {
+      notify(e.message)
+    }
+  }
+
+  const showInterests = async requestId => {
+    await loadInterests(requestId)
+    setSelectedRequest(requestId)
+  }
+
+  const sendInterest = async id => {
+    try {
+      await busy(() => api.interest(id, message))
+      setMessage('')
+      notify('Interest submitted. The student can now review your details.')
+      open.reload()
+    } catch (e) {
+      notify(e.message)
+    }
+  }
+
+  const selectTeacher = async (id, teacherId) => {
+    try {
+      await busy(() => api.selectTeacher(id, teacherId))
+      notify('Teacher selected. You can now create the class booking.')
+      mine.reload()
+      setSelectedRequest(null)
+    } catch (e) {
+      notify(e.message)
+    }
+  }
+
+  return (
+      <div className="page-stack">
+        <PageHero
+            title="Help requests"
+            subtitle={
+              auth.role === 'TEACHER'
+                  ? 'Explore open requests and respond when your expertise matches.'
+                  : 'Post the topic and time you need help with.'
+            }
+            action={
+              auth.role !== 'TEACHER'
+                  ? {
+                    label: 'Post a request',
+                    onClick: () => go('create-request')
+                  }
+                  : null
+            }
+        />
+
+        <div className="tabs">
+          <button
+              className={active === 'open' ? 'active' : ''}
+              onClick={() => setActive('open')}
+          >
+            Open requests
+          </button>
+
+          <button
+              className={active === 'mine' ? 'active' : ''}
+              onClick={() => setActive('mine')}
+          >
+            My requests
+          </button>
+        </div>
+
+        <div className="request-grid">
+          {list.map(item => (
+              <RequestCard
+                  key={item.id}
+                  item={item}
+                  role={auth.role}
+                  onInterest={() => sendInterest(item.id)}
+                  onShowInterests={() => showInterests(item.id)}
+                  message={message}
+                  setMessage={setMessage}
+                  onBook={() => setBooking(item)}
+              />
+          ))}
+        </div>
+
+        {!list.length && !(open.loading || mine.loading) && (
+            <EmptyState
+                icon={MessageCircle}
+                title="Nothing here yet"
+                text={
+                  active === 'mine'
+                      ? 'You have not posted any help requests.'
+                      : 'No open help requests are available.'
+                }
+            />
+        )}
+
+        {selectedRequest && (
+            <InterestModal
+                requestId={selectedRequest}
+                interests={interests[selectedRequest] || []}
+                onClose={() => setSelectedRequest(null)}
+                onSelect={selectTeacher}
+            />
+        )}
+
+        {booking && (
+            <BookingModal
+                request={booking}
+                onClose={() => setBooking(null)}
+                onDone={() => {
+                  setBooking(null)
+                  mine.reload()
+                }}
+            />
+        )}
+      </div>
+  )
 }
 
 function CreateRequestPage({ notify }) {

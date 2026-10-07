@@ -134,6 +134,20 @@ export const api = {
     selectTeacher: (id, teacherId) =>
         json('POST', `/help/${id}/select-teacher`, { teacherId }),
 
+    // Notifications
+    notifications: () =>
+        request('/notifications'),
+
+    markNotificationRead: id =>
+        request(`/notifications/${id}/read`, {
+            method: 'POST'
+        }),
+
+    markAllNotificationsRead: () =>
+        request('/notifications/read-all', {
+            method: 'POST'
+        }),
+
     myClasses: () =>
         request('/classes/mine'),
 
