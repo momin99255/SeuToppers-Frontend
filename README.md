@@ -29,12 +29,13 @@ Copy `.env.example` to `.env` if the backend URL is different.
 - Dashboard with top-ranked teachers
 - Teacher search and profile view
 - Rating/review performance visuals using backend data
-- Help request creation and browsing
+- Help request creation and student-owned request management
+- Open request browsing for teachers
 - Private teacher interest list and teacher selection
 - Class booking
 - Service taken
 - Payment history and bKash checkout hand-off
-- Your submitted reviews shown read-only
+- Your submitted reviews shown read-only on the device where they were submitted
 - Teacher application with CV upload
 - 80% profile completion gate
 - 3.80 CGPA frontend eligibility gate
@@ -80,6 +81,8 @@ The supplied backend currently does not expose endpoints for:
 - Ban/remove user actions
 
 The frontend therefore does not fake those operations. Notification UI is provided for client-side activity events, and unavailable admin actions are visibly disabled until backend endpoints are added.
+
+Submitted class reviews are sent to the backend, while the frontend caches review details in the current browser so students can see their own reviews and teachers can preview reviews left on that device. Cross-device student and teacher review lists require an individual-review retrieval endpoint from the backend.
 
 The supplied backend also does not expose a public per-teacher completed-service count, so the public teacher profile uses the rating/review metrics that are actually available. The teacher's own service count is calculated from `/api/classes/teacher`.
 

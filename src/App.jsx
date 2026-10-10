@@ -3,14 +3,77 @@ import React, { useEffect, useMemo, useState } from 'react'
 import {
   ArrowRight, Bell, BookOpen, CalendarDays, Check, ChevronDown, ChevronRight, CircleDollarSign,
   ClipboardList, Clock3, FileText, GraduationCap, Home, LayoutDashboard, LogIn, LogOut,
-  Menu, MessageCircle, Pencil, Search, ShieldCheck, Star, UserRound, Users, WalletCards,
-  X, Upload, Sparkles, Ban, CheckCircle2, AlertCircle, Eye, Plus, RefreshCw, LockKeyhole
+  Menu, MessageCircle, Search, ShieldCheck, Star, UserRound, Users, WalletCards,
+  X, Upload, Sparkles, Ban, CheckCircle2, AlertCircle, Eye, Plus, RefreshCw, LockKeyhole, Send
 } from 'lucide-react'
 import { api, fileUrl } from './api'
+
+
+const requestInterestUiStyle = `
+.request-interest-star {
+  margin-left: auto;
+  width: 42px;
+  height: 42px;
+  min-width: 42px;
+  border: 1px solid rgba(255,255,255,.14);
+  border-radius: 11px;
+  background: rgba(255,255,255,.04);
+  color: #c9d6e5;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  flex: 0 0 auto;
+  transition: .2s ease;
+}
+.request-interest-star:hover:not(:disabled) {
+  transform: translateY(-1px);
+  border-color: rgba(255,210,70,.55);
+  color: #ffd54a;
+}
+.request-interest-star.marked {
+  color: #ffd54a;
+  background: rgba(255,213,74,.10);
+  border-color: rgba(255,213,74,.45);
+}
+.request-interest-star:disabled {
+  opacity: 1;
+  cursor: default;
+}
+.request-student-avatar {
+  border-radius: 50% !important;
+}
+`
+
+if (typeof document !== 'undefined' && !document.getElementById('seutoppers-request-ui-fix')) {
+  const style = document.createElement('style')
+  style.id = 'seutoppers-request-ui-fix'
+  style.textContent = requestInterestUiStyle
+  document.head.appendChild(style)
+}
 
 const APP = import.meta.env.VITE_APP_NAME || 'SeuToppers'
 const departments = ['CSE', 'BBA', 'EEE', 'TEXTILE', 'BANGLA', 'ENGLISH', 'ECONOMICS']
 const programs = ['BSc', 'MSc', 'BBA', 'MBA', 'BA', 'MA', 'BSS', 'MSS', 'LLB', 'LLM', 'Other']
+const REVIEW_STORAGE_KEY = 'seutoppers_reviews'
+
+function readStoredReviews() {
+  try {
+    const reviews = JSON.parse(localStorage.getItem(REVIEW_STORAGE_KEY) || '[]')
+    return Array.isArray(reviews) ? reviews : []
+  } catch {
+    return []
+  }
+}
+
+function storeReview(review) {
+  try {
+    const reviews = readStoredReviews().filter(item => item.classId !== review.classId)
+    localStorage.setItem(REVIEW_STORAGE_KEY, JSON.stringify([review, ...reviews]))
+  } catch (error) {
+    console.error('Failed to cache submitted review:', error)
+  }
+}
 
 function readAuth() {
   try {
@@ -506,7 +569,7 @@ function AppShell({ auth, page, go, logout, notify, busy, notifications }) {
         <div><strong>{displayName}</strong><span>{teacher ? 'Student & Teacher' : auth.role}</span></div>
       </div>
       <nav className="side-nav">{links.map(([id, label, Icon]) => <button key={id} className={page === id ? 'active' : ''} onClick={() => { go(id); setOpen(false) }}><Icon size={18}/><span>{label}</span></button>)}</nav>
-      <div className="sidebar-bottom"><button onClick={() => { go('profile'); setOpen(false) }}><SettingsIcon/><span>Account settings</span></button><button className="logout" onClick={logout}><LogOut size={18}/><span>Log out</span></button></div>
+      <div className="sidebar-bottom"><button className="logout" onClick={logout}><LogOut size={18}/><span>Log out</span></button></div>
     </aside>
     <div className="main-shell">
       <header className="appbar"><button className="mobile-menu" onClick={() => setOpen(true)}><Menu/></button><div className="crumb"><span>{APP}</span><ChevronRight size={15}/><b>{links.find(x => x[0] === page)?.[1] || 'Overview'}</b></div><div className="app-actions"><div className="notification-wrap"><button className="icon-btn" onClick={() => setNotiOpen(v => !v)}><Bell size={18}/>{notifications.items.some(x => !x.read) && <i className="notify-dot"/>}</button>{notiOpen && <NotificationPanel items={notifications.items} markRead={notifications.markRead} markAll={notifications.markAll}/>}</div><span className="role-pill">{teacher ? 'TEACHER + STUDENT' : auth.role}</span><button className="icon-btn" onClick={logout}><LogOut size={17}/></button></div></header>
@@ -520,7 +583,7 @@ function Page({ page, auth, go, notify, busy, notifications }) {
   if (page === 'teachers') return <TeachersPage auth={auth} notify={notify} />
   if (page === 'requests') return <RequestsPage auth={auth} go={go} notify={notify} busy={busy} />
   if (page === 'create-request') return <CreateRequestPage notify={notify} />
-  if (page === 'service-taken') return <ServiceTakenPage notify={notify} />
+  if (page === 'service-taken') return <ServiceTakenPage auth={auth} notify={notify} />
   if (page === 'service-given') return <ServiceGivenPage notify={notify} />
   if (page === 'payments') return <PaymentsPage notify={notify} />
   if (page === 'reviews') return <ReviewsPage auth={auth} />
@@ -656,22 +719,121 @@ function TeachersPage({ auth, notify }) {
 function TeacherProfileView({ teacher, onBack, auth }) {
   const [interestSubject, setInterestSubject] = useState(teacher.subjects?.[0] || '')
   const rating = Number(teacher.rating || 0)
-  return <div className="page-stack"><button className="back-button" onClick={onBack}><ChevronRight size={17} className="back-icon"/> Back to teachers</button><section className="profile-hero panel"><div className="profile-avatar large">{teacher.profileImage ? <img src={fileUrl(teacher.profileImage)} alt=""/> : initials(teacher.fullName)}</div><div className="profile-main"><span className="eyebrow">PEER TEACHER</span><h1>{teacher.fullName || 'Teacher'}</h1><p>{teacher.qualification || teacher.program || 'SEU teacher'} · {teacher.department || 'SEU'}</p><div className="chips">{(teacher.subjects || []).map(s => <span key={s}>{s}</span>)}</div></div><div className="rating-box"><div className="rating-ring" style={{ '--rating': `${rating / 5 * 100}%` }}><strong>{rating.toFixed(1)}</strong><span>/ 5</span></div><b>{teacher.totalReviews || 0} reviews</b></div></section><div className="detail-grid"><section className="panel"><SectionHeading title="Performance snapshot" subtitle="Only metrics exposed by the current backend are shown."/><div className="metric-chart"><div className="bar-track"><div className="bar-fill" style={{ width: `${Math.max(0, Math.min(100, rating / 5 * 100))}%` }}/></div><div className="metric-row"><span>Average rating</span><strong>{rating.toFixed(1)} / 5</strong></div><div className="bar-track"><div className="bar-fill" style={{ width: `${Math.min(100, Number(teacher.totalReviews || 0) * 5)}%` }}/></div><div className="metric-row"><span>Review volume</span><strong>{teacher.totalReviews || 0}</strong></div></div><div className="subject-graph">{(teacher.subjects || []).map((s, i) => <div key={s} className="subject-row"><span>{s}</span><i style={{ width: `${Math.max(24, 92 - i * 11)}%` }}/></div>)}</div></section><section className="panel"><SectionHeading title="Teacher details"/><InfoRow label="Experience" value={teacher.experience || 'Not provided'}/><InfoRow label="Teaching mode" value={teacher.teachingMode || 'Not provided'}/><InfoRow label="Availability" value={teacher.availability || 'Not provided'}/><InfoRow label="Hourly rate" value={teacher.hourlyRate ? `৳${teacher.hourlyRate}` : 'Set after selection'}/><InfoRow label="Location" value={teacher.location || 'SEU community'}/></section></div></div>
+  const teacherId = teacher.userId || teacher.id
+  const reviewsData = useLoad(() => api.teacherReviews(teacherId), [teacherId])
+  const reviewsList = Array.isArray(reviewsData.data) ? reviewsData.data : []
+
+  return (
+    <div className="page-stack">
+      <button className="back-button" onClick={onBack}>
+        <ChevronRight size={17} className="back-icon" /> Back to teachers
+      </button>
+      <section className="profile-hero panel">
+        <div className="profile-avatar large">
+          {teacher.profileImage ? <img src={fileUrl(teacher.profileImage)} alt="" /> : initials(teacher.fullName)}
+        </div>
+        <div className="profile-main">
+          <span className="eyebrow">PEER TEACHER</span>
+          <h1>{teacher.fullName || 'Teacher'}</h1>
+          <p>{teacher.qualification || teacher.program || 'SEU teacher'} · {teacher.department || 'SEU'}</p>
+          <div className="chips">
+            {(teacher.subjects || []).map(s => <span key={s}>{s}</span>)}
+          </div>
+        </div>
+        <div className="rating-box">
+          <div className="rating-ring" style={{ '--rating': `${rating / 5 * 100}%` }}>
+            <strong>{rating.toFixed(1)}</strong>
+            <span>/ 5</span>
+          </div>
+          <b>{teacher.totalReviews || reviewsList.length || 0} reviews</b>
+        </div>
+      </section>
+      <div className="detail-grid">
+        <section className="panel">
+          <SectionHeading title="Performance snapshot" subtitle="Only metrics exposed by the current backend are shown." />
+          <div className="metric-chart">
+            <div className="bar-track">
+              <div className="bar-fill" style={{ width: `${Math.max(0, Math.min(100, rating / 5 * 100))}%` }} />
+            </div>
+            <div className="metric-row">
+              <span>Average rating</span>
+              <strong>{rating.toFixed(1)} / 5</strong>
+            </div>
+            <div className="bar-track">
+              <div className="bar-fill" style={{ width: `${Math.min(100, Number(teacher.totalReviews || reviewsList.length || 0) * 5)}%` }} />
+            </div>
+            <div className="metric-row">
+              <span>Review volume</span>
+              <strong>{teacher.totalReviews || reviewsList.length || 0}</strong>
+            </div>
+          </div>
+          <div className="subject-graph">
+            {(teacher.subjects || []).map((s, i) => (
+              <div key={s} className="subject-row">
+                <span>{s}</span>
+                <i style={{ width: `${Math.max(24, 92 - i * 11)}%` }} />
+              </div>
+            ))}
+          </div>
+        </section>
+        <section className="panel">
+          <SectionHeading title="Teacher details" />
+          <InfoRow label="Experience" value={teacher.experience || 'Not provided'} />
+          <InfoRow label="Teaching mode" value={teacher.teachingMode || 'Not provided'} />
+          <InfoRow label="Availability" value={teacher.availability || 'Not provided'} />
+          <InfoRow label="Hourly rate" value={teacher.hourlyRate ? `৳${teacher.hourlyRate}` : 'Set after selection'} />
+          <InfoRow label="Location" value={teacher.location || 'SEU community'} />
+        </section>
+      </div>
+
+      <section className="panel" style={{ marginTop: 12 }}>
+        <SectionHeading title="Student reviews" subtitle="Real feedback submitted by students who took classes." />
+        <div className="review-grid">
+          {reviewsList.map(x => (
+            <article className="review-card" key={x.id}>
+              <div className="review-top">
+                <div>
+                  <b>{x.studentName || 'Student'}</b>
+                  <small>{formatDate(x.createdAt)}</small>
+                </div>
+                <Stars value={x.rating} />
+              </div>
+              <p>{x.comment}</p>
+            </article>
+          ))}
+        </div>
+        {!reviewsData.loading && !reviewsList.length && (
+          <p className="muted" style={{ padding: '16px 0', fontSize: '13px' }}>
+            No student reviews submitted for this teacher yet.
+          </p>
+        )}
+      </section>
+    </div>
+  )
 }
 
 function RequestsPage({ auth, go, notify, busy }) {
-  const open = useLoad(api.openRequests, [])
+  const open = useLoad(
+      auth.role === 'TEACHER' ? api.openRequests : async () => [],
+      [auth.role]
+  )
   const mine = useLoad(api.myRequests, [auth.role])
 
-  const [active, setActive] = useState('open')
+  const [active, setActive] = useState(auth.role === 'TEACHER' ? 'open' : 'mine')
   const [interests, setInterests] = useState({})
   const [message, setMessage] = useState('')
   const [selectedRequest, setSelectedRequest] = useState(null)
-  const [booking, setBooking] = useState(null)
+  const [markedRequests, setMarkedRequests] = useState(() => {
+    try {
+      return JSON.parse(localStorage.getItem(`seutoppers_interested_${auth.userId}`) || '{}')
+    } catch {
+      return {}
+    }
+  })
 
   const rawList = active === 'mine' ? mine.data : open.data
 
-  const list = Array.isArray(rawList)
+  const allList = Array.isArray(rawList)
       ? rawList
       : Array.isArray(rawList?.content)
           ? rawList.content
@@ -679,10 +841,18 @@ function RequestsPage({ auth, go, notify, busy }) {
               ? rawList.data
               : []
 
+  const list = active === 'open'
+      ? allList.filter(item => item.studentId !== auth.userId)
+      : allList
+
   const loadInterests = async requestId => {
     try {
       const value = await api.interests(requestId)
-      setInterests(x => ({ ...x, [requestId]: value }))
+
+      setInterests(x => ({
+        ...x,
+        [requestId]: value
+      }))
     } catch (e) {
       notify(e.message)
     }
@@ -693,22 +863,75 @@ function RequestsPage({ auth, go, notify, busy }) {
     setSelectedRequest(requestId)
   }
 
-  const sendInterest = async id => {
+  const toggleInterest = async requestId => {
+    const targetItem = allList.find(r => r.id === requestId)
+    if (targetItem && targetItem.studentId === auth.userId) {
+      notify('You cannot express interest in your own request.')
+      return
+    }
+
+    const alreadyMarked = !!markedRequests[requestId]
+
     try {
-      await busy(() => api.interest(id, message))
-      setMessage('')
-      notify('Interest submitted. The student can now review your details.')
+      if (alreadyMarked) {
+        await busy(() => api.removeInterest(requestId))
+
+        setMarkedRequests(x => {
+          const next = { ...x }
+          delete next[requestId]
+          localStorage.setItem(
+              `seutoppers_interested_${auth.userId}`,
+              JSON.stringify(next)
+          )
+          return next
+        })
+
+        notify('Interest removed.')
+      } else {
+        await busy(() => api.interest(requestId, message))
+
+        setMessage('')
+
+        setMarkedRequests(x => {
+          const next = { ...x, [requestId]: true }
+          localStorage.setItem(
+              `seutoppers_interested_${auth.userId}`,
+              JSON.stringify(next)
+          )
+          return next
+        })
+
+        notify(
+            'Interest submitted. The student can now review your profile.'
+        )
+      }
+
       open.reload()
     } catch (e) {
       notify(e.message)
     }
   }
 
-  const selectTeacher = async (id, teacherId) => {
+  const selectTeacher = async (requestId, teacherId) => {
     try {
-      await busy(() => api.selectTeacher(id, teacherId))
-      notify('Teacher selected. You can now create the class booking.')
-      mine.reload()
+      await busy(() =>
+          api.selectTeacher(requestId, teacherId)
+      )
+
+      /*
+       * Backend automatically:
+       * 1. Selects the teacher
+       * 2. Creates a 1-hour class
+       * 3. Sets price to ৳100
+       * 4. Creates simulated HELD payment
+       * 5. Notifies the teacher
+       */
+      notify(
+          'Teacher selected! Please go to Payment history to complete payment and confirm the class.'
+      )
+
+      await mine.reload()
+
       setSelectedRequest(null)
     } catch (e) {
       notify(e.message)
@@ -717,52 +940,55 @@ function RequestsPage({ auth, go, notify, busy }) {
 
   return (
       <div className="page-stack">
+
         <PageHero
             title="Help requests"
             subtitle={
               auth.role === 'TEACHER'
                   ? 'Explore open requests and respond when your expertise matches.'
-                  : 'Post the topic and time you need help with.'
+                  : 'Manage your requests and review interested teachers.'
             }
-            action={
-              auth.role !== 'TEACHER'
-                  ? {
-                    label: 'Post a request',
-                    onClick: () => go('create-request')
-                  }
-                  : null
-            }
+            action={{
+              label: 'Post a request',
+              onClick: () => go('create-request')
+            }}
         />
 
         <div className="tabs">
-          <button
-              className={active === 'open' ? 'active' : ''}
-              onClick={() => setActive('open')}
-          >
-            Open requests
-          </button>
-
+          {auth.role === 'TEACHER' && (
+              <button
+                  className={active === 'open' ? 'active' : ''}
+                  onClick={() => setActive('open')}
+              >
+                Open requests
+              </button>
+          )}
           <button
               className={active === 'mine' ? 'active' : ''}
               onClick={() => setActive('mine')}
           >
             My requests
           </button>
+
         </div>
 
         <div className="request-grid">
+
           {list.map(item => (
               <RequestCard
                   key={item.id}
                   item={item}
                   role={auth.role}
-                  onInterest={() => sendInterest(item.id)}
+                  isOwner={item.studentId === auth.userId}
+                  canInterest={auth.role === 'TEACHER' && item.studentId !== auth.userId}
+                  interested={!!markedRequests[item.id]}
+                  onInterest={() => toggleInterest(item.id)}
                   onShowInterests={() => showInterests(item.id)}
                   message={message}
                   setMessage={setMessage}
-                  onBook={() => setBooking(item)}
               />
           ))}
+
         </div>
 
         {!list.length && !(open.loading || mine.loading) && (
@@ -781,37 +1007,203 @@ function RequestsPage({ auth, go, notify, busy }) {
             <InterestModal
                 requestId={selectedRequest}
                 interests={interests[selectedRequest] || []}
+                requestOwnerId={allList.find(r => r.id === selectedRequest)?.studentId || auth.userId}
+                currentUserId={auth.userId}
                 onClose={() => setSelectedRequest(null)}
                 onSelect={selectTeacher}
             />
         )}
 
-        {booking && (
-            <BookingModal
-                request={booking}
-                onClose={() => setBooking(null)}
-                onDone={() => {
-                  setBooking(null)
-                  mine.reload()
-                }}
-            />
-        )}
       </div>
   )
 }
 
 function CreateRequestPage({ notify }) {
-  const [form, setForm] = useState({ topic: '', description: '', requestedTime: '', durationMinutes: 60, budget: '' }), [error, setError] = useState(''), [done, setDone] = useState(false)
-  const submit = async e => { e.preventDefault(); setError(''); try { await api.createRequest({ ...form, durationMinutes: Number(form.durationMinutes), budget: Number(form.budget) }); setDone(true); notify('Help request posted successfully.') } catch (e) { setError(e.message) } }
-  if (done) return <div className="empty-page"><div className="success-mark"><Check size={25}/></div><h2>Request posted</h2><p>Teachers can now respond with interest.</p><button className="primary" onClick={() => window.location.hash = 'requests'}>View requests <ArrowRight size={16}/></button></div>
-  return <div className="page-stack"><PageHero title="Post a help request" subtitle="Describe what you need, when you need it and your budget."/><section className="panel form-panel"><form className="form" onSubmit={submit}><div className="form-grid"><Field label="Topic" value={form.topic} onChange={e => setForm({ ...form, topic: e.target.value })} placeholder="e.g. Data Mining - DBSCAN" required/><Field label="Requested time" value={form.requestedTime} onChange={e => setForm({ ...form, requestedTime: e.target.value })} placeholder="e.g. Friday 8:00 PM" required/><Field label="Duration (minutes)" type="number" value={form.durationMinutes} onChange={e => setForm({ ...form, durationMinutes: e.target.value })} required/><Field label="Budget (BDT)" type="number" value={form.budget} onChange={e => setForm({ ...form, budget: e.target.value })} required/></div><TextArea label="Description" value={form.description} onChange={e => setForm({ ...form, description: e.target.value })} placeholder="Explain the exact topic or problem." required/><ErrorBox error={error}/><button className="primary" disabled={false}>Post request <ArrowRight size={16}/></button></form></section></div>
+  const [form, setForm] = useState({
+    topic: '',
+    description: '',
+    requestedTime: ''
+  })
+
+  const [error, setError] = useState('')
+  const [done, setDone] = useState(false)
+
+  const submit = async e => {
+    e.preventDefault()
+    setError('')
+
+    try {
+      await api.createRequest({
+        topic: form.topic,
+        description: form.description,
+        requestedTime: form.requestedTime
+      })
+
+      setDone(true)
+      notify('Help request posted successfully.')
+    } catch (e) {
+      setError(e.message)
+    }
+  }
+
+  if (done) {
+    return (
+        <div className="empty-page">
+          <div className="success-mark">
+            <Check size={25}/>
+          </div>
+
+          <h2>Request posted</h2>
+
+          <p>
+            Teachers can now respond with interest.
+          </p>
+
+          <button
+              className="primary"
+              onClick={() => window.location.hash = 'requests'}
+          >
+            View requests <ArrowRight size={16}/>
+          </button>
+        </div>
+    )
+  }
+
+  return (
+      <div className="page-stack">
+        <PageHero
+            title="Post a help request"
+            subtitle="Describe what you need and when you need help."
+        />
+
+        <section className="panel form-panel">
+          <form className="form" onSubmit={submit}>
+
+            <div className="form-grid">
+              <Field
+                  label="Topic"
+                  value={form.topic}
+                  onChange={e =>
+                      setForm({
+                        ...form,
+                        topic: e.target.value
+                      })
+                  }
+                  placeholder="e.g. Data Mining - DBSCAN"
+                  required
+              />
+
+              <Field
+                  label="Requested time"
+                  value={form.requestedTime}
+                  onChange={e =>
+                      setForm({
+                        ...form,
+                        requestedTime: e.target.value
+                      })
+                  }
+                  placeholder="e.g. Friday 8:00 PM"
+                  required
+              />
+            </div>
+
+            <TextArea
+                label="Description"
+                value={form.description}
+                onChange={e =>
+                    setForm({
+                      ...form,
+                      description: e.target.value
+                    })
+                }
+                placeholder="Explain the exact topic or problem you need help with."
+                required
+            />
+
+            <div className="info-box">
+              <strong>Class details</strong>
+              <span>Duration: 1 hour · Fixed price: ৳100</span>
+            </div>
+
+            <ErrorBox error={error}/>
+
+            <button className="primary" type="submit">
+              Post request <ArrowRight size={16}/>
+            </button>
+
+          </form>
+        </section>
+      </div>
+  )
 }
 
-function ServiceTakenPage({ notify }) {
+function ServiceTakenPage({ auth, notify }) {
   const data = useLoad(api.myClasses, [])
   const teachers = useLoad(api.teachers, [])
+  const myReviews = useLoad(api.myReviews, [auth?.userId])
+  const [reviews, setReviews] = useState(readStoredReviews)
   const map = useMemo(() => Object.fromEntries((teachers.data || []).map(x => [x.userId, x])), [teachers.data])
-  return <div className="page-stack"><PageHero title="Service taken" subtitle="Every class you booked as a student appears here."/><section className="class-list">{data.loading ? <LoadingCard/> : (data.data || []).map(c => <ClassCard key={c.id} item={c} teacher={map[c.teacherId]} studentView onReview={notify}/>)}</section>{!data.loading && !data.data?.length && <EmptyState icon={BookOpen} title="No classes yet" text="Select a teacher from a help request to book your first class."/>}</div>
+  const reviewedIds = useMemo(() => {
+    const ids = new Set((myReviews.data || []).map(x => x.classId))
+    reviews.forEach(x => ids.add(x.classId))
+    return ids
+  }, [reviews, myReviews.data])
+  const reviewedClasses = (data.data || []).filter(c => reviewedIds.has(c.id) || c.status === 'COMPLETED')
+  const classesToReview = (data.data || []).filter(c => !reviewedIds.has(c.id) && c.status !== 'COMPLETED' && c.status !== 'CANCELLED')
+
+  const refresh = async () => {
+    await data.reload()
+    await myReviews.reload()
+    setReviews(readStoredReviews())
+  }
+
+  return <div className="page-stack">
+    <PageHero title="Service taken" subtitle="Track accepted classes, their status and your teacher reviews."/>
+
+    {!!classesToReview.length && (
+        <section className="panel">
+          <SectionHeading title="Your classes" subtitle="Review a class when you are ready."/>
+          <div className="class-list">
+            {classesToReview.map(c => (
+                <ClassCard
+                    key={c.id}
+                    item={c}
+                    teacher={map[c.teacherId]}
+                    auth={auth}
+                    studentView
+                    pendingReview
+                    onReview={refresh}
+                    notify={notify}
+                />
+            ))}
+          </div>
+        </section>
+    )}
+
+    {!!reviewedClasses.length && (
+        <section className="panel">
+          <SectionHeading title="Reviewed classes" subtitle="Your submitted reviews are saved here."/>
+          <div className="class-list">
+            {reviewedClasses.map(c => (
+                <ClassCard
+                    key={c.id}
+                    item={c}
+                    teacher={map[c.teacherId]}
+                    auth={auth}
+                    studentView
+                    reviewed
+                    onReview={refresh}
+                    notify={notify}
+                />
+            ))}
+          </div>
+        </section>
+    )}
+
+    {!data.loading && !classesToReview.length && !reviewedClasses.length && (
+        <EmptyState icon={BookOpen} title="No services taken yet" text="A class will appear here after you accept a teacher from your request."/>
+    )}
+  </div>
 }
 
 function ServiceGivenPage({ notify }) {
@@ -820,21 +1212,485 @@ function ServiceGivenPage({ notify }) {
 }
 
 function PaymentsPage({ notify }) {
-  const payments = useLoad(api.myPayments, []), classes = useLoad(api.myClasses, [])
+  const payments = useLoad(api.myPayments, [])
+  const classes = useLoad(api.myClasses, [])
+  const teachers = useLoad(api.teachers, [])
+
   const classMap = useMemo(() => Object.fromEntries((classes.data || []).map(x => [x.id, x])), [classes.data])
-  const pay = async p => { try { const result = await api.initiatePayment(p.classId); if (result.checkoutUrl) window.open(result.checkoutUrl, '_blank', 'noopener,noreferrer'); else notify('bKash checkout URL is not configured in the backend yet.') } catch (e) { notify(e.message) } }
-  return <div className="page-stack"><PageHero title="Payment history" subtitle="Track pending, held and released payments."/><section className="panel"><div className="table-wrap"><table><thead><tr><th>Class</th><th>Amount</th><th>Gateway</th><th>Status</th><th>Date</th><th/></tr></thead><tbody>{(payments.data || []).map(p => <tr key={p.id}><td><strong>{classMap[p.classId]?.scheduledTime || 'Class'}</strong><small>{p.classId}</small></td><td>৳{p.amount ?? '-'}</td><td>{p.gateway || 'BKASH'}</td><td><StatusPill value={p.status}/></td><td>{formatDate(p.createdAt)}</td><td>{p.status === 'PENDING' && <button className="small-primary" onClick={() => pay(p)}>Pay with bKash</button>}</td></tr>)}</tbody></table></div>{!payments.loading && !payments.data?.length && <EmptyState icon={WalletCards} title="No payments yet" text="Your class payment records will appear here."/>}</section></div>
+  const teacherMap = useMemo(() => Object.fromEntries((teachers.data || []).map(x => [x.userId || x.id, x])), [teachers.data])
+
+  const [activePaymentForPay, setActivePaymentForPay] = useState(null)
+  const [activeChat, setActiveChat] = useState(null)
+  const [cancellingId, setCancellingId] = useState(null)
+
+  const getNormalizedStatus = (status) => {
+    if (status === 'CANCELLED') return 'CANCELLED'
+    if (status === 'PAID' || status === 'HELD' || status === 'RELEASED') return 'PAID'
+    return 'PENDING'
+  }
+
+  const handleCancel = async (p) => {
+    if (!window.confirm('Are you sure you want to cancel this class booking and payment?')) return
+    setCancellingId(p.id)
+    try {
+      await api.cancelPayment(p.id)
+      notify('Class booking and payment have been cancelled.')
+      await payments.reload()
+      await classes.reload()
+    } catch (e) {
+      notify(e.message)
+    } finally {
+      setCancellingId(null)
+    }
+  }
+
+  const handlePaymentSuccess = async (message) => {
+    notify(message || 'Payment successful! Your class is confirmed.')
+    setActivePaymentForPay(null)
+    await payments.reload()
+    await classes.reload()
+  }
+
+  return (
+    <div className="page-stack">
+      <PageHero
+        title="Payment history"
+        subtitle="Track payment states, chat with teachers, cancel pending bookings, or confirm services via payment gateway."
+      />
+
+      <section className="panel">
+        <div className="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th style={{ width: 64, textAlign: 'center' }}>Chat</th>
+                <th>Class</th>
+                <th>Amount</th>
+                <th>Gateway</th>
+                <th>Status</th>
+                <th>Date</th>
+                <th style={{ minWidth: 195 }}>Action</th>
+              </tr>
+            </thead>
+            <tbody>
+              {(payments.data || []).map(p => {
+                const classItem = classMap[p.classId]
+                const teacher = teacherMap[p.teacherId] || (classItem ? teacherMap[classItem.teacherId] : null)
+                const normalizedStatus = getNormalizedStatus(p.status)
+
+                return (
+                  <tr key={p.id}>
+                    <td style={{ textAlign: 'center' }}>
+                      <button
+                        type="button"
+                        className="chat-action-btn"
+                        title="Chat with teacher (Demo)"
+                        onClick={() => setActiveChat({ payment: p, classItem, teacher })}
+                      >
+                        <MessageCircle size={16} />
+                      </button>
+                    </td>
+                    <td>
+                      <strong>{classItem?.scheduledTime || 'Class session'}</strong>
+                      <small>{teacher?.fullName ? `Teacher: ${teacher.fullName}` : `Class ID: ${p.classId?.slice(-6) || '—'}`}</small>
+                    </td>
+                    <td>
+                      <strong style={{ color: '#eaf3ff' }}>৳{p.amount ?? '-'}</strong>
+                    </td>
+                    <td>
+                      <span className="gateway-badge">{p.gateway || 'BKASH'}</span>
+                    </td>
+                    <td>
+                      <StatusPill value={normalizedStatus} />
+                    </td>
+                    <td>
+                      <div>{formatDate(p.createdAt)}</div>
+                      {formatTime(p.createdAt) && (
+                        <small style={{ color: 'var(--muted, #94a3b8)', fontSize: '11px', display: 'block', marginTop: 2 }}>
+                          {formatTime(p.createdAt)}
+                        </small>
+                      )}
+                    </td>
+                    <td>
+                      {normalizedStatus === 'PENDING' ? (
+                        <div className="payment-action-group">
+                          <button
+                            type="button"
+                            className="btn-pay-green"
+                            onClick={() => setActivePaymentForPay({ payment: p, classItem, teacher })}
+                          >
+                            <CircleDollarSign size={14} /> Pay
+                          </button>
+                          <button
+                            type="button"
+                            className="btn-cancel-red"
+                            disabled={cancellingId === p.id}
+                            onClick={() => handleCancel(p)}
+                          >
+                            <X size={14} /> {cancellingId === p.id ? 'Cancelling...' : 'Cancel'}
+                          </button>
+                        </div>
+                      ) : normalizedStatus === 'PAID' ? (
+                        <span className="payment-confirmed-tag">
+                          <CheckCircle2 size={14} /> Paid & Confirmed
+                        </span>
+                      ) : (
+                        <span className="payment-cancelled-tag">
+                          <Ban size={14} /> Cancelled
+                        </span>
+                      )}
+                    </td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </div>
+        {!payments.loading && !payments.data?.length && (
+          <EmptyState icon={WalletCards} title="No payments yet" text="Your class payment records will appear here." />
+        )}
+      </section>
+
+      {activePaymentForPay && (
+        <PaymentGatewayModal
+          payment={activePaymentForPay.payment}
+          classItem={activePaymentForPay.classItem}
+          teacher={activePaymentForPay.teacher}
+          onClose={() => setActivePaymentForPay(null)}
+          onSuccess={handlePaymentSuccess}
+        />
+      )}
+
+      {activeChat && (
+        <DemoChatModal
+          payment={activeChat.payment}
+          classItem={activeChat.classItem}
+          teacher={activeChat.teacher}
+          onClose={() => setActiveChat(null)}
+        />
+      )}
+    </div>
+  )
+}
+
+function PaymentGatewayModal({ payment, classItem, teacher, onClose, onSuccess }) {
+  const minAmount = Number(payment.amount || 100)
+  const [amount, setAmount] = useState(minAmount)
+  const [phone, setPhone] = useState('01812345678')
+  const [trxId, setTrxId] = useState(() => 'BK' + Math.random().toString(36).substring(2, 9).toUpperCase())
+  const [error, setError] = useState('')
+  const [submitting, setSubmitting] = useState(false)
+
+  const handlePay = async (e) => {
+    e.preventDefault()
+    setError('')
+    const payVal = Number(amount)
+    if (isNaN(payVal) || payVal < minAmount) {
+      setError(`Payment amount must be equal to or greater than ৳${minAmount}.`)
+      return
+    }
+    if (!phone.trim()) {
+      setError('Please provide a valid bKash number.')
+      return
+    }
+
+    setSubmitting(true)
+    try {
+      await api.payPayment(payment.id, {
+        amount: payVal,
+        transactionId: trxId.trim(),
+        gateway: 'BKASH',
+        senderNumber: phone.trim()
+      })
+      onSuccess(`Payment of ৳${payVal} completed successfully! Your class is confirmed and teacher is notified.`)
+    } catch (err) {
+      setError(err.message)
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  return (
+    <Modal title="bKash Payment Gateway" onClose={onClose}>
+      <form className="form" onSubmit={handlePay}>
+        <div className="bkash-banner">
+          <div className="bkash-badge">bKash</div>
+          <div>
+            <strong>Merchant Payment Checkout</strong>
+            <small>Automated escrow verification</small>
+          </div>
+        </div>
+
+        <div className="bkash-service-info">
+          <div>
+            <span>Service</span>
+            <strong>{classItem?.scheduledTime || 'Academic Class'}</strong>
+          </div>
+          <div>
+            <span>Teacher</span>
+            <strong>{teacher?.fullName || 'SEU Teacher'}</strong>
+          </div>
+          <div>
+            <span>Required Minimum</span>
+            <strong style={{ color: '#70e6cf' }}>৳{minAmount}</strong>
+          </div>
+        </div>
+
+        <Field
+          label={`Pay Amount (BDT) — Minimum ৳${minAmount} required`}
+          type="number"
+          min={minAmount}
+          step="1"
+          value={amount}
+          onChange={e => setAmount(e.target.value)}
+          required
+        />
+
+        <Field
+          label="bKash Account Number"
+          type="text"
+          placeholder="01XXXXXXXXX"
+          value={phone}
+          onChange={e => setPhone(e.target.value)}
+          required
+        />
+
+        <div className="field">
+          <span>Transaction ID (Simulation)</span>
+          <div className="password-wrap">
+            <input
+              type="text"
+              value={trxId}
+              onChange={e => setTrxId(e.target.value)}
+              required
+            />
+            <button
+              type="button"
+              style={{ width: 'auto', padding: '0 10px', fontSize: '11px', color: '#70e6cf' }}
+              onClick={() => setTrxId('BK' + Math.random().toString(36).substring(2, 9).toUpperCase())}
+            >
+              New TrxID
+            </button>
+          </div>
+        </div>
+
+        <ErrorBox error={error} />
+
+        <div className="bkash-actions">
+          <button type="button" className="secondary" onClick={onClose} disabled={submitting}>
+            Cancel
+          </button>
+          <button type="submit" className="primary btn-bkash-confirm" disabled={submitting}>
+            {submitting ? <Spinner /> : <><Check size={16} /> Confirm & Pay ৳{amount}</>}
+          </button>
+        </div>
+      </form>
+    </Modal>
+  )
+}
+
+function DemoChatModal({ payment, classItem, teacher, onClose }) {
+  const teacherName = teacher?.fullName || 'Teacher'
+  const [messages, setMessages] = useState([
+    {
+      id: 1,
+      sender: 'teacher',
+      text: `Hello! Looking forward to our class${classItem?.scheduledTime ? ` on ${classItem.scheduledTime}` : ''}. Feel free to drop any questions or topics you'd like to prepare for!`,
+      time: '10:00 AM'
+    }
+  ])
+  const [input, setInput] = useState('')
+  const [isTyping, setIsTyping] = useState(false)
+
+  const handleSend = (e) => {
+    e.preventDefault()
+    if (!input.trim()) return
+    const newMsg = {
+      id: Date.now(),
+      sender: 'student',
+      text: input.trim(),
+      time: 'Just now'
+    }
+    setMessages(prev => [...prev, newMsg])
+    setInput('')
+    setIsTyping(true)
+
+    setTimeout(() => {
+      setIsTyping(false)
+      setMessages(prev => [
+        ...prev,
+        {
+          id: Date.now() + 1,
+          sender: 'teacher',
+          text: 'Got it! I will have everything ready for our session. (Demo mode: Real-time messaging will be linked soon)',
+          time: 'Just now'
+        }
+      ])
+    }, 1000)
+  }
+
+  return (
+    <Modal title={`Chat with ${teacherName}`} onClose={onClose}>
+      <div className="demo-chat-box">
+        <div className="demo-chat-header-bar">
+          <div className="demo-chat-user-info">
+            <div className="profile-avatar" style={{ width: 34, height: 34, borderRadius: 10 }}>
+              {teacher?.profileImage ? (
+                <img src={fileUrl(teacher.profileImage)} alt="" />
+              ) : (
+                initials(teacherName)
+              )}
+            </div>
+            <div>
+              <strong>{teacherName}</strong>
+              <small><span className="chat-online-dot" /> Active now (Demo)</small>
+            </div>
+          </div>
+          <span className="demo-chat-pill">Demo Chat</span>
+        </div>
+
+        <div className="demo-chat-body">
+          <div className="demo-chat-notice">
+            <span>Direct student-teacher chat demo for class #{payment?.classId?.slice(-6) || 'session'}</span>
+          </div>
+          {messages.map(m => (
+            <div key={m.id} className={`chat-bubble-row ${m.sender === 'student' ? 'me' : 'them'}`}>
+              <div className={`chat-bubble ${m.sender === 'student' ? 'bubble-me' : 'bubble-them'}`}>
+                <p style={{ margin: 0 }}>{m.text}</p>
+                <small>{m.time}</small>
+              </div>
+            </div>
+          ))}
+          {isTyping && (
+            <div className="chat-bubble-row them">
+              <div className="chat-bubble bubble-them typing-indicator">
+                <span>{teacherName} is typing...</span>
+              </div>
+            </div>
+          )}
+        </div>
+
+        <form className="demo-chat-footer" onSubmit={handleSend}>
+          <input
+            type="text"
+            placeholder="Type your message..."
+            value={input}
+            onChange={e => setInput(e.target.value)}
+          />
+          <button type="submit" className="primary small" disabled={!input.trim()}>
+            <Send size={15} /> Send
+          </button>
+        </form>
+      </div>
+    </Modal>
+  )
 }
 
 function ReviewsPage({ auth }) {
-  const key = `seutoppers_reviews_${auth.userId}`
-  const [items] = useState(() => { try { return JSON.parse(localStorage.getItem(key) || '[]') } catch { return [] } })
-  return <div className="page-stack"><PageHero title="Your reviews" subtitle="Reviews you have submitted are kept read-only here."/><section className="review-grid">{items.map(x => <article className="review-card" key={x.id}><div className="review-top"><div><b>{x.teacherName || 'Teacher'}</b><small>{formatDate(x.createdAt)}</small></div><Stars value={x.rating}/></div><p>{x.comment}</p></article>)}</section>{!items.length && <EmptyState icon={Star} title="No reviews yet" text="After a completed class, you can leave one review. Submitted reviews are uneditable."/>}</div>
+  const data = useLoad(api.myReviews, [auth?.userId])
+  const apiList = Array.isArray(data.data) ? data.data : []
+  const localList = readStoredReviews().filter(review => review.studentId === auth?.userId)
+
+  const map = new Map()
+  apiList.forEach(r => map.set(r.classId || r.id, r))
+  localList.forEach(r => {
+    const key = r.classId || r.id
+    if (!map.has(key)) map.set(key, r)
+  })
+  const items = Array.from(map.values())
+
+  return (
+    <div className="page-stack">
+      <PageHero
+        title="Your reviews"
+        subtitle="Reviews you have submitted for your classes."
+      />
+      <section className="review-grid">
+        {items.map(x => (
+          <article className="review-card" key={x.id}>
+            <div className="review-top">
+              <div>
+                <b>{x.teacherName || 'Teacher'}</b>
+                <small>{formatDate(x.createdAt)}</small>
+              </div>
+              <Stars value={x.rating} />
+            </div>
+            <p>{x.comment}</p>
+            <small className="muted">Class: {x.classId}</small>
+          </article>
+        ))}
+      </section>
+      {!data.loading && !items.length && (
+        <EmptyState
+          icon={Star}
+          title="No reviews yet"
+          text="After accepting a teacher and completing the class, you can rate and review them from Service taken."
+        />
+      )}
+    </div>
+  )
 }
 
 function TeacherReviewsPage() {
   const profile = useLoad(api.teacherProfile, [])
-  return <div className="page-stack"><PageHero title="Student reviews" subtitle="Your backend currently exposes aggregate rating data on the teacher profile."/><section className="review-summary panel"><div className="rating-ring big" style={{ '--rating': `${Number(profile.data?.rating || 0) / 5 * 100}%` }}><strong>{Number(profile.data?.rating || 0).toFixed(1)}</strong><span>/ 5</span></div><div><span className="eyebrow">CURRENT RATING</span><h2>{profile.data?.totalReviews || 0} student reviews</h2><p className="muted">Individual review retrieval is not exposed by the current backend API, so the frontend does not invent review text.</p></div></section></div>
+  const teacherId = profile.data?.userId || profile.data?.id
+  const data = useLoad(api.myTeacherReviews, [teacherId])
+  const apiList = Array.isArray(data.data) ? data.data : []
+  const localList = readStoredReviews().filter(review => review.teacherId === teacherId)
+
+  const map = new Map()
+  apiList.forEach(r => map.set(r.classId || r.id, r))
+  localList.forEach(r => {
+    const key = r.classId || r.id
+    if (!map.has(key)) map.set(key, r)
+  })
+  const reviews = Array.from(map.values())
+
+  const totalReviewsCount = profile.data?.totalReviews || reviews.length
+
+  return (
+    <div className="page-stack">
+      <PageHero
+        title="Student reviews"
+        subtitle="Feedback and ratings submitted by students for your classes."
+      />
+      <section className="review-summary panel">
+        <div
+          className="rating-ring big"
+          style={{ '--rating': `${Number(profile.data?.rating || 0) / 5 * 100}%` }}
+        >
+          <strong>{Number(profile.data?.rating || 0).toFixed(1)}</strong>
+          <span>/ 5</span>
+        </div>
+        <div>
+          <span className="eyebrow">CURRENT RATING</span>
+          <h2>{totalReviewsCount} student reviews</h2>
+        </div>
+      </section>
+      <section className="review-grid">
+        {reviews.map(x => (
+          <article className="review-card" key={x.id}>
+            <div className="review-top">
+              <div>
+                <b>{x.studentName || 'Student'}</b>
+                <small>{formatDate(x.createdAt)}</small>
+              </div>
+              <Stars value={x.rating} />
+            </div>
+            <p>{x.comment}</p>
+            <small className="muted">Class: {x.classId}</small>
+          </article>
+        ))}
+      </section>
+      {!data.loading && !reviews.length && (
+        <EmptyState
+          icon={Star}
+          title="No student reviews yet"
+          text="When students complete classes and submit reviews, their feedback will appear here."
+        />
+      )}
+    </div>
+  )
 }
 
 function TeacherApplyPage({ notify, busy }) {
@@ -1132,15 +1988,148 @@ function AdminApplications({ notify, busy }) {
   return <div className="page-stack"><PageHero title="Teacher applications" subtitle="Review CVs and application details before approval."/><div className="admin-list">{data.data?.map(a => <article className="application-card" key={a.id}><div className="application-main"><div className="avatar square"><FileText size={19}/></div><div><span className="eyebrow">PENDING</span><h3>{a.qualification}</h3><p>{(a.subjects || []).join(' · ')}</p><div className="application-meta"><span>CGPA {a.currentCgpa}</span><span>{a.semester}</span><span>Batch {a.batch}</span><span>{formatDate(a.submittedAt)}</span></div></div></div><div className="application-actions"><a className="secondary small" href={fileUrl(a.cvUrl)} target="_blank" rel="noreferrer"><Eye size={15}/> View CV</a><button className="danger small" onClick={() => act(a.id, false)}>Reject</button><button className="primary small" onClick={() => act(a.id, true)}>Approve</button></div></article>)}{!data.loading && !data.data?.length && <EmptyState icon={ClipboardList} title="No pending applications" text="New teacher applications will appear here."/>}</div></div>
 }
 
-function AdminPayments({ notify }) {
+function AdminPayments() {
   const data = useLoad(api.adminPayments, [])
-  const hold = async p => { const tx = window.prompt('Enter bKash transaction ID'); if (!tx) return; try { await api.holdPayment(p.id, tx); notify('Payment marked as held.'); data.reload() } catch (e) { notify(e.message) } }
-  return <div className="page-stack"><PageHero title="Payment history" subtitle="Review payment states and manually confirm bKash transactions when needed."/><section className="panel"><div className="table-wrap"><table><thead><tr><th>Class</th><th>Amount</th><th>Student</th><th>Teacher</th><th>Status</th><th>Action</th></tr></thead><tbody>{data.data?.map(p => <tr key={p.id}><td>{p.classId}</td><td>৳{p.amount}</td><td>{p.studentId}</td><td>{p.teacherId}</td><td><StatusPill value={p.status}/></td><td>{p.status === 'PENDING' && <button className="small-primary" onClick={() => hold(p)}>Mark held</button>}</td></tr>)}</tbody></table></div></section></div>
+  const list = Array.isArray(data.data) ? data.data : []
+
+  return (
+    <div className="page-stack">
+      <PageHero
+        title="Payment history"
+        subtitle="All confirmed and paid transactions across the platform."
+      />
+      <section className="panel">
+        <div className="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Paid by (Student)</th>
+                <th>Paid to (Teacher)</th>
+                <th>Transaction ID</th>
+                <th>Amount</th>
+                <th>Gateway</th>
+                <th>Status</th>
+                <th>Date</th>
+              </tr>
+            </thead>
+            <tbody>
+              {list.map(p => (
+                <tr key={p.id}>
+                  <td>
+                    <strong>{p.studentName || 'Student'}</strong>
+                    <small>{p.studentEmail || p.studentId}</small>
+                  </td>
+                  <td>
+                    <strong>{p.teacherName || 'Teacher'}</strong>
+                    <small>{p.teacherEmail || p.teacherId}</small>
+                  </td>
+                  <td>
+                    <code style={{ background: 'rgba(255,255,255,0.06)', padding: '3px 7px', borderRadius: 6, color: '#70e6cf', fontSize: '11px' }}>
+                      {p.transactionId || '—'}
+                    </code>
+                  </td>
+                  <td>
+                    <strong style={{ color: '#eaf3ff' }}>৳{p.amount ?? '-'}</strong>
+                  </td>
+                  <td>
+                    <span className="gateway-badge">{p.gateway || 'BKASH'}</span>
+                  </td>
+                  <td>
+                    <StatusPill value={p.status || 'PAID'} />
+                  </td>
+                  <td>
+                    <div>{formatDate(p.createdAt)}</div>
+                    {formatTime(p.createdAt) && (
+                      <small style={{ color: 'var(--muted, #94a3b8)', fontSize: '11px', display: 'block', marginTop: 2 }}>
+                        {formatTime(p.createdAt)}
+                      </small>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        {!data.loading && !list.length && (
+          <EmptyState
+            icon={WalletCards}
+            title="No transactions yet"
+            text="Completed student payments will appear here."
+          />
+        )}
+      </section>
+    </div>
+  )
 }
 
 function AdminClasses() {
   const data = useLoad(api.adminClasses, [])
-  return <div className="page-stack"><PageHero title="Class history" subtitle="All class bookings recorded by the backend."/><section className="panel"><div className="table-wrap"><table><thead><tr><th>Class</th><th>Student</th><th>Teacher</th><th>Scheduled</th><th>Amount</th><th>Status</th></tr></thead><tbody>{data.data?.map(c => <tr key={c.id}><td>{c.id}</td><td>{c.studentId}</td><td>{c.teacherId}</td><td>{c.scheduledTime}</td><td>৳{c.amount}</td><td><StatusPill value={c.status}/></td></tr>)}</tbody></table></div></section></div>
+  const list = Array.isArray(data.data) ? data.data : []
+
+  return (
+    <div className="page-stack">
+      <PageHero
+        title="Class history"
+        subtitle="All class bookings and sessions recorded across the platform."
+      />
+      <section className="panel">
+        <div className="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Class ID</th>
+                <th>Student</th>
+                <th>Teacher</th>
+                <th>Scheduled</th>
+                <th>Amount</th>
+                <th>Status</th>
+                <th>Date</th>
+              </tr>
+            </thead>
+            <tbody>
+              {list.map(c => (
+                <tr key={c.id}>
+                  <td>
+                    <strong>#{c.id?.slice(-6) || c.id}</strong>
+                  </td>
+                  <td>
+                    <strong>{c.studentName || 'Student'}</strong>
+                    <small>{c.studentEmail || c.studentId}</small>
+                  </td>
+                  <td>
+                    <strong>{c.teacherName || 'Teacher'}</strong>
+                    <small>{c.teacherEmail || c.teacherId}</small>
+                  </td>
+                  <td>{c.scheduledTime || 'Time not set'}</td>
+                  <td>
+                    <strong style={{ color: '#eaf3ff' }}>৳{c.amount ?? '-'}</strong>
+                  </td>
+                  <td>
+                    <StatusPill value={c.status} />
+                  </td>
+                  <td>
+                    <div>{formatDate(c.createdAt)}</div>
+                    {formatTime(c.createdAt) && (
+                      <small style={{ color: 'var(--muted, #94a3b8)', fontSize: '11px', display: 'block', marginTop: 2 }}>
+                        {formatTime(c.createdAt)}
+                      </small>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        {!data.loading && !list.length && (
+          <EmptyState
+            icon={CalendarDays}
+            title="No classes recorded"
+            text="Class bookings will appear here."
+          />
+        )}
+      </section>
+    </div>
+  )
 }
 
 function AdminTeachers({ notify }) {
@@ -1514,19 +2503,568 @@ function AdminStudentCard({ student, notify, reload }) {
   )
 }
 
-function RequestCard({ item, role, onInterest, onShowInterests, message, setMessage, onBook }) {
-  return <article className="request-card"><div className="request-top"><div className="topic-icon"><MessageCircle size={19}/></div><div><span className="eyebrow">{item.status}</span><h3>{item.topic}</h3></div><span className="interest-count"><Users size={14}/> {item.interestedTeachers}</span></div><p>{item.description}</p><div className="request-meta"><span><Clock3 size={14}/>{item.requestedTime}</span><span><BookOpen size={14}/>{item.durationMinutes} min</span><span><CircleDollarSign size={14}/>৳{item.budget}</span></div>{role === 'TEACHER' && item.status === 'OPEN' && <><textarea value={message} onChange={e => setMessage(e.target.value)} placeholder="Short message to the student"/><button className="primary full" onClick={onInterest}>Show interest <ArrowRight size={15}/></button></>}{role !== 'TEACHER' && item.status === 'OPEN' && <button className="secondary full" onClick={onShowInterests}>View interested teachers</button>}{role !== 'TEACHER' && item.status === 'TEACHER_SELECTED' && <button className="primary full" onClick={onBook}>Book class <ArrowRight size={15}/></button>}</article>
+function RequestCard({
+                       item,
+                       role,
+                       isOwner,
+                       canInterest,
+                       interested,
+                       onInterest,
+                       onShowInterests,
+                       message,
+                       setMessage
+                     }) {
+  return (
+      <article className="request-card">
+
+        <div className="request-top">
+
+          <div className="topic-icon">
+            <MessageCircle size={19}/>
+          </div>
+
+          <div>
+            <span className="eyebrow">
+              {item.status}
+            </span>
+
+            <h3>{item.topic}</h3>
+          </div>
+
+          {canInterest && (
+              <button
+                  type="button"
+                  aria-label={interested ? 'Remove interest' : 'Mark interest'}
+                  title={interested ? 'Remove interest' : 'Mark interest'}
+                  className={`request-interest-star ${interested ? 'marked' : ''}`}
+                  onClick={onInterest}
+              >
+                <Star
+                    size={22}
+                    strokeWidth={2.2}
+                    fill={interested ? 'currentColor' : 'none'}
+                />
+              </button>
+          )}
+
+        </div>
+
+        <div className="request-student">
+
+          <div
+              className="profile-avatar request-student-avatar"
+              style={{
+                width: 46,
+                height: 46,
+                minWidth: 46,
+                minHeight: 46,
+                borderRadius: '50%',
+                overflow: 'hidden'
+              }}
+          >
+            {item.studentProfileImage ? (
+                <img
+                    src={fileUrl(item.studentProfileImage)}
+                    alt=""
+                    style={{
+                      width: '100%',
+                      height: '100%',
+                      display: 'block',
+                      objectFit: 'cover',
+                      borderRadius: '50%'
+                    }}
+                />
+            ) : (
+                initials(item.studentName || 'Student')
+            )}
+          </div>
+
+          <div>
+            <strong>
+              {item.studentName || 'Student'}
+            </strong>
+
+            <span>
+              Student
+            </span>
+          </div>
+
+        </div>
+
+        <p>
+          {item.description}
+        </p>
+
+        <div className="request-meta">
+          <span>
+            <Clock3 size={14}/>
+            {item.requestedTime}
+          </span>
+
+          <span>
+            <BookOpen size={14}/>
+            1 hour
+          </span>
+
+          <span>
+            <CircleDollarSign size={14}/>
+            ৳100
+          </span>
+        </div>
+
+        {canInterest && item.status === 'OPEN' && (
+            <>
+              <textarea
+                  value={message}
+                  onChange={e => setMessage(e.target.value)}
+                  placeholder="Short message to the student"
+              />
+
+              <button
+                  className="primary full"
+                  onClick={onInterest}
+                  disabled={interested}
+              >
+                {interested ? 'Interest marked' : 'Show interest'}
+                <ArrowRight size={15}/>
+              </button>
+            </>
+        )}
+
+        {isOwner && (
+            <button
+                className="secondary full"
+                onClick={onShowInterests}
+            >
+              View interested teachers
+            </button>
+        )}
+
+        {isOwner &&
+            item.status === 'TEACHER_SELECTED' && (
+                <div className="request-confirmed">
+                  <CheckCircle2 size={16}/>
+                  <span>
+                    Teacher selected. Class and payment are confirmed.
+                  </span>
+                </div>
+            )}
+
+      </article>
+  )
 }
 
-function InterestModal({ requestId, interests, onClose, onSelect }) { return <Modal title="Interested teachers" onClose={onClose}><div className="interest-list">{interests.map(x => <article className="interest-item" key={x.id}><div className="profile-avatar">{initials(x.teacherName)}</div><div><b>{x.teacherName}</b><p>{x.message}</p><StatusPill value={x.status}/></div><button className="primary small" disabled={x.status !== 'INTERESTED'} onClick={() => onSelect(requestId, x.teacherId)}>{x.status === 'SELECTED' ? 'Selected' : 'Select teacher'}</button></article>)}{!interests.length && <EmptyState icon={Users} title="No interests yet" text="Teachers who respond will appear here."/>}</div></Modal> }
+function InterestModal({ requestId, interests = [], requestOwnerId, currentUserId, onClose, onSelect }) {
+  const [teachers, setTeachers] = useState([])
+  const [profileTeacher, setProfileTeacher] = useState(null)
+
+  const validInterests = useMemo(() => {
+    return (interests || []).filter(item => {
+      if (!item) return false
+      if (requestOwnerId && item.teacherId === requestOwnerId) return false
+      if (currentUserId && item.teacherId === currentUserId) return false
+      return true
+    })
+  }, [interests, requestOwnerId, currentUserId])
+
+  useEffect(() => {
+    let active = true
+
+    api.teachers()
+        .then(data => {
+          if (active) {
+            setTeachers(Array.isArray(data) ? data : [])
+          }
+        })
+        .catch(() => {
+          if (active) setTeachers([])
+        })
+
+    return () => {
+      active = false
+    }
+  }, [])
+
+  const getTeacherProfile = teacherId =>
+      teachers.find(
+          teacher =>
+              teacher.userId === teacherId ||
+              teacher.id === teacherId
+      ) || null
+
+  if (profileTeacher) {
+    const rating = Number(profileTeacher.rating || 0)
+
+    return (
+        <Modal title="Teacher profile" onClose={onClose}>
+          <div className="interest-profile-view">
+            <button
+                type="button"
+                className="secondary small"
+                onClick={() => setProfileTeacher(null)}
+            >
+              ← Back to interested teachers
+            </button>
+
+            <div className="interest-profile-header">
+              <div
+                  className="profile-avatar large"
+                  style={{
+                    width: 82,
+                    height: 82,
+                    minWidth: 82,
+                    borderRadius: '50%',
+                    overflow: 'hidden'
+                  }}
+              >
+                {profileTeacher.profileImage ? (
+                    <img
+                        src={fileUrl(profileTeacher.profileImage)}
+                        alt=""
+                        style={{
+                          width: '100%',
+                          height: '100%',
+                          objectFit: 'cover',
+                          display: 'block',
+                          borderRadius: '50%'
+                        }}
+                    />
+                ) : (
+                    initials(profileTeacher.fullName || 'Teacher')
+                )}
+              </div>
+
+              <div>
+                <span className="eyebrow">PEER TEACHER</span>
+                <h2>{profileTeacher.fullName || 'Teacher'}</h2>
+                <p className="muted">
+                  {profileTeacher.qualification ||
+                      profileTeacher.program ||
+                      'SEU teacher'}
+                  {' · '}
+                  {profileTeacher.department || 'SEU'}
+                </p>
+              </div>
+            </div>
+
+            <div className="chips">
+              {(profileTeacher.subjects || []).map(subject => (
+                  <span key={subject}>{subject}</span>
+              ))}
+            </div>
+
+            <div className="detail-grid">
+              <section className="panel">
+                <SectionHeading
+                    title="Teacher details"
+                    subtitle="Review the teacher before accepting."
+                />
+                <InfoRow
+                    label="Rating"
+                    value={`${rating.toFixed(1)} / 5`}
+                />
+                <InfoRow
+                    label="Reviews"
+                    value={profileTeacher.totalReviews || 0}
+                />
+                <InfoRow
+                    label="Experience"
+                    value={profileTeacher.experience || 'Not provided'}
+                />
+                <InfoRow
+                    label="Teaching mode"
+                    value={profileTeacher.teachingMode || 'Not provided'}
+                />
+                <InfoRow
+                    label="Availability"
+                    value={profileTeacher.availability || 'Not provided'}
+                />
+              </section>
+            </div>
+
+            {(() => {
+              const interest = validInterests.find(
+                  item => item.teacherId === (profileTeacher.userId || profileTeacher.id)
+              )
+
+              return interest?.status === 'INTERESTED' ? (
+                  <button
+                      type="button"
+                      className="primary full"
+                      onClick={() => onSelect(requestId, interest.teacherId)}
+                  >
+                    Accept this teacher <Check size={16} />
+                  </button>
+              ) : interest?.status === 'SELECTED' ? (
+                  <div className="request-confirmed">
+                    <CheckCircle2 size={16} />
+                    <span>This teacher has already been accepted.</span>
+                  </div>
+              ) : null
+            })()}
+          </div>
+        </Modal>
+    )
+  }
+
+  return (
+      <Modal title="Interested teachers" onClose={onClose}>
+        <div className="interest-list">
+          {validInterests.map(item => {
+            const teacher = getTeacherProfile(item.teacherId)
+
+            return (
+                <article className="interest-item" key={item.id}>
+                  <div
+                      className="profile-avatar"
+                      style={{
+                        width: 52,
+                        height: 52,
+                        minWidth: 52,
+                        borderRadius: '50%',
+                        overflow: 'hidden'
+                      }}
+                  >
+                    {teacher?.profileImage ? (
+                        <img
+                            src={fileUrl(teacher.profileImage)}
+                            alt=""
+                            style={{
+                              width: '100%',
+                              height: '100%',
+                              objectFit: 'cover',
+                              display: 'block',
+                              borderRadius: '50%'
+                            }}
+                        />
+                    ) : (
+                        initials(item.teacherName || 'Teacher')
+                    )}
+                  </div>
+
+                  <div className="interest-main">
+                    <b>{item.teacherName || 'Teacher'}</b>
+
+                    <p>{item.message || 'Interested in helping you.'}</p>
+
+                    <StatusPill value={item.status} />
+
+                    <div
+                        className="interest-actions"
+                        style={{
+                          display: 'flex',
+                          gap: 8,
+                          marginTop: 10,
+                          flexWrap: 'wrap'
+                        }}
+                    >
+                      <button
+                          type="button"
+                          className="secondary small"
+                          onClick={() => {
+                            if (teacher) {
+                              setProfileTeacher(teacher)
+                            }
+                          }}
+                          disabled={!teacher}
+                      >
+                        <Eye size={15} />
+                        View profile
+                      </button>
+
+                      {item.status === 'INTERESTED' && (
+                          <button
+                              type="button"
+                              className="primary small"
+                              onClick={() => onSelect(requestId, item.teacherId)}
+                          >
+                            <Check size={15} />
+                            Accept teacher
+                          </button>
+                      )}
+
+                      {item.status === 'SELECTED' && (
+                          <span className="request-confirmed">
+                      <CheckCircle2 size={15} />
+                      Accepted
+                    </span>
+                      )}
+                    </div>
+                  </div>
+                </article>
+            )
+          })}
+
+          {!validInterests.length && (
+              <EmptyState
+                  icon={Users}
+                  title="No interests yet"
+                  text="Teachers who respond will appear here."
+              />
+          )}
+        </div>
+      </Modal>
+  )
+}
 
 function BookingModal({ request, onClose, onDone }) { const [teacherId, setTeacherId] = useState(''), [time, setTime] = useState(request.requestedTime || ''), [amount, setAmount] = useState(request.budget || ''), [teachers, setTeachers] = useState([]), [error, setError] = useState(''); useEffect(() => { api.interests(request.id).then(setTeachers).catch(() => {}) }, [request.id]); const selected = teachers.find(x => x.status === 'SELECTED'); useEffect(() => { if (selected) setTeacherId(selected.teacherId) }, [selected]); const submit = async e => { e.preventDefault(); try { await api.createClass({ requestId: request.id, teacherId, scheduledTime: time, amount: Number(amount) }); onDone() } catch (e) { setError(e.message) } }; return <Modal title="Book your class" onClose={onClose}><form className="form" onSubmit={submit}><InfoRow label="Selected teacher" value={selected?.teacherName || 'Selected teacher'}/><Field label="Scheduled time" value={time} onChange={e => setTime(e.target.value)} required/><Field label="Amount (BDT)" type="number" value={amount} onChange={e => setAmount(e.target.value)} required/><ErrorBox error={error}/><button className="primary full">Create class booking <ArrowRight size={16}/></button></form></Modal> }
 
-function ClassCard({ item, teacher, studentView, onReview }) { const [reviewOpen, setReviewOpen] = useState(false); return <article className="class-card"><div className="class-icon"><CalendarDays size={19}/></div><div className="class-main"><div className="class-heading"><div><span className="eyebrow">{studentView ? 'SERVICE TAKEN' : 'CLASS'}</span><h3>{teacher?.fullName || `Teacher ${item.teacherId?.slice(-5) || ''}`}</h3></div><StatusPill value={item.status}/></div><div className="class-meta"><span>{item.scheduledTime}</span><span>৳{item.amount}</span><span>{formatDate(item.createdAt)}</span></div></div>{studentView && item.status === 'COMPLETED' && <button className="secondary small" onClick={() => setReviewOpen(true)}><Star size={15}/> Review</button>}{reviewOpen && <ReviewModal classId={item.id} teacher={teacher} onClose={() => setReviewOpen(false)} onDone={onReview}/>}</article> }
+function ClassCard({ item, teacher, auth, studentView, pendingReview, reviewed, onReview, notify }) {
+  const [reviewOpen, setReviewOpen] = useState(false)
+  const isStarted = item.status === 'STARTED'
+  const isCompleted = item.status === 'COMPLETED' || reviewed
 
-function TeacherClassCard({ item, notify, reload }) { const action = async type => { try { if (type === 'start') await api.startClass(item.id); else await api.completeClass(item.id); notify(type === 'start' ? 'Class started.' : 'Class completed.'); reload() } catch (e) { notify(e.message) } }; return <article className="class-card"><div className="class-icon"><GraduationCap size={19}/></div><div className="class-main"><div className="class-heading"><div><span className="eyebrow">SERVICE GIVEN</span><h3>Student class</h3></div><StatusPill value={item.status}/></div><div className="class-meta"><span>{item.scheduledTime}</span><span>৳{item.amount}</span><span>{formatDate(item.createdAt)}</span></div></div><div className="button-row">{item.status === 'PAID' && <button className="secondary small" onClick={() => action('start')}>Start</button>}{['PAID', 'STARTED'].includes(item.status) && <button className="primary small" onClick={() => action('complete')}>Complete</button>}</div></article> }
+  return <article className="class-card">
+    <div className="class-icon"><CalendarDays size={19}/></div>
+    <div className="class-main">
+      <div className="class-heading">
+        <div>
+          <span className="eyebrow">{studentView ? 'SERVICE TAKEN' : 'CLASS'}</span>
+          <h3>{teacher?.fullName || `Teacher ${item.teacherId?.slice(-5) || ''}`}</h3>
+        </div>
+        <StatusPill value={isCompleted ? 'COMPLETED' : item.status || 'PENDING'}/>
+      </div>
+      <div className="class-meta"><span>{item.scheduledTime || 'Time not set'}</span><span>৳{item.amount ?? '-'}</span><span>{formatDate(item.createdAt)}</span></div>
+    </div>
 
-function ReviewModal({ classId, teacher, onClose, onDone }) { const [rating, setRating] = useState(5), [comment, setComment] = useState(''), [error, setError] = useState(''); const submit = async e => { e.preventDefault(); try { await api.reviewClass(classId, { rating, comment }); const key = `seutoppers_reviews_${JSON.parse(localStorage.getItem('seutoppers_auth') || '{}').userId}`; const old = JSON.parse(localStorage.getItem(key) || '[]'); localStorage.setItem(key, JSON.stringify([{ id: crypto.randomUUID(), teacherName: teacher?.fullName, rating, comment, createdAt: new Date().toISOString() }, ...old])); onDone('Review submitted successfully.'); onClose() } catch (e) { setError(e.message) } }; return <Modal title={`Review ${teacher?.fullName || 'teacher'}`} onClose={onClose}><form className="form" onSubmit={submit}><label className="field"><span>Rating</span><div className="rating-picker">{[1,2,3,4,5].map(x => <button type="button" key={x} className={x <= rating ? 'selected' : ''} onClick={() => setRating(x)}><Star size={23} fill="currentColor"/></button>)}</div></label><TextArea label="Review" value={comment} onChange={e => setComment(e.target.value)} placeholder="Share your experience." required/><ErrorBox error={error}/><button className="primary full">Submit review <Check size={16}/></button></form></Modal> }
+    {studentView && !isCompleted && (
+      isStarted ? (
+        <button className="primary small" onClick={() => setReviewOpen(true)}>
+          <Star size={15}/> Rate teacher
+        </button>
+      ) : (
+        <button
+          className="secondary small"
+          disabled
+          style={{ opacity: 0.55, cursor: 'not-allowed', display: 'inline-flex', alignItems: 'center', gap: 6 }}
+          title="Teacher must start the class before you can review"
+        >
+          <Clock3 size={15}/> Rate teacher (Unmarked until started)
+        </button>
+      )
+    )}
+
+    {studentView && isCompleted && (
+      <div className="request-confirmed">
+        <CheckCircle2 size={16}/>
+        <span>Review submitted. Class completed.</span>
+      </div>
+    )}
+
+    {reviewOpen && (
+      <ReviewModal
+        classItem={item}
+        teacher={teacher}
+        auth={auth}
+        onClose={() => setReviewOpen(false)}
+        onDone={async message => {
+          notify?.(message)
+          await onReview?.()
+        }}
+      />
+    )}
+  </article>
+}
+
+function TeacherClassCard({ item, notify, reload }) {
+  const student = typeof item.student === 'object' ? item.student : null
+  const studentProfile = typeof item.studentProfile === 'object' ? item.studentProfile : null
+  const studentName =
+      item.studentName ||
+      item.studentFullName ||
+      student?.fullName ||
+      student?.name ||
+      studentProfile?.fullName ||
+      studentProfile?.name ||
+      `Student ${item.studentId?.slice(-5) || ''}`
+
+  const action = async type => {
+    try {
+      if (type === 'start') {
+        await api.startClass(item.id)
+        notify('Class started. Student can now review and complete the class.')
+      } else {
+        await api.completeClass(item.id)
+        notify('Class completed.')
+      }
+      reload()
+    } catch (e) {
+      notify(e.message)
+    }
+  }
+
+  const isCompleted = item.status === 'COMPLETED'
+
+  return <article className="class-card">
+    <div className="class-icon"><GraduationCap size={19}/></div>
+    <div className="class-main">
+      <div className="class-heading">
+        <div><span className="eyebrow">SERVICE GIVEN</span><h3>{studentName}</h3></div>
+        <StatusPill value={isCompleted ? 'COMPLETED' : item.status || 'PENDING'}/>
+      </div>
+      <div className="class-meta"><span>{item.scheduledTime || 'Time not set'}</span><span>৳{item.amount ?? '-'}</span><span>{formatDate(item.createdAt)}</span></div>
+    </div>
+    <div className="button-row">
+      {item.status === 'PAID' && (
+        <button className="primary small" onClick={() => action('start')}>
+          Start Class
+        </button>
+      )}
+      {item.status === 'STARTED' && (
+        <span className="status status-started" style={{ padding: '6px 12px', fontSize: '11px', display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+          <Clock3 size={13} /> Class in progress
+        </span>
+      )}
+      {isCompleted && (
+        <div className="request-confirmed">
+          <CheckCircle2 size={16}/>
+          <span>Class completed & reviewed</span>
+        </div>
+      )}
+    </div>
+  </article>
+}
+
+function ReviewModal({ classItem, teacher, auth, onClose, onDone }) {
+  const [rating, setRating] = useState(5)
+  const [comment, setComment] = useState('')
+  const [error, setError] = useState('')
+
+  const submit = async e => {
+    e.preventDefault()
+    setError('')
+    try {
+      await api.reviewClass(classItem.id, { rating, comment })
+      storeReview({
+        id: `${classItem.id}-${Date.now()}`,
+        classId: classItem.id,
+        teacherId: classItem.teacherId,
+        teacherName: teacher?.fullName || 'Teacher',
+        studentId: auth.userId,
+        studentName: classItem.studentName || auth.email?.split('@')[0] || 'Student',
+        rating,
+        comment,
+        createdAt: new Date().toISOString()
+      })
+      await onDone?.('Review submitted successfully. The class is now marked reviewed.')
+      onClose()
+    } catch (e) {
+      setError(e.message)
+    }
+  }
+
+  return <Modal title={`Review ${teacher?.fullName || 'teacher'}`} onClose={onClose}>
+    <form className="form" onSubmit={submit}>
+      <label className="field">
+        <span>Rating</span>
+        <div className="rating-picker">{[1,2,3,4,5].map(x => <button type="button" key={x} className={x <= rating ? 'selected' : ''} onClick={() => setRating(x)}><Star size={23} fill="currentColor"/></button>)}</div>
+      </label>
+      <TextArea label="Review" value={comment} onChange={e => setComment(e.target.value)} placeholder="Share your experience." required/>
+      <ErrorBox error={error}/>
+      <button className="primary full">Submit review <Check size={16}/></button>
+    </form>
+  </Modal>
+}
 
 function TeacherCard({ teacher, rank, onOpen }) {
   return (
@@ -1601,7 +3139,7 @@ function LoadingCard() { return <div className="loading-card"><Spinner/><span>Lo
 function SkeletonCards({ count = 4 }) { return Array.from({ length: count }).map((_, i) => <div className="skeleton-card" key={i}><i/><b/><span/></div>) }
 function EmptyState({ icon: Icon, title, text }) { return <div className="empty-state"><div className="empty-icon"><Icon size={22}/></div><h3>{title}</h3><p>{text}</p></div> }
 function Modal({ title, children, onClose }) { return <div className="modal-backdrop" onMouseDown={e => e.target === e.currentTarget && onClose()}><div className="modal"><div className="modal-head"><h2>{title}</h2><button className="icon-btn" onClick={onClose}><X size={18}/></button></div>{children}</div></div> }
-function NotificationPanel({ items, markRead, markAll }) { return <div className="notification-panel"><div className="notification-head"><b>Notifications</b><button className="link" onClick={markAll}>Mark all read</button></div>{items.length ? items.slice(0, 7).map(x => <button className={`notification-item ${x.read ? '' : 'unread'}`} key={x.id} onClick={() => markRead(x.id)}><div className="notification-dot"><Bell size={14}/></div><div><b>{x.title}</b><p>{x.text}</p><small>{formatDate(x.createdAt)}</small></div></button>) : <p className="muted notification-empty">No activity notifications yet.</p>}<small className="notification-note">Persistent server-side notifications are not exposed by the current backend.</small></div> }
+function NotificationPanel({ items, markRead, markAll }) { return <div className="notification-panel"><div className="notification-head"><b>Notifications</b><button className="link" onClick={markAll}>Mark all read</button></div>{items.length ? items.slice(0, 7).map(x => <button className={`notification-item ${x.read ? '' : 'unread'}`} key={x.id} onClick={() => markRead(x.id)}><div className="notification-dot"><Bell size={14}/></div><div><b>{x.title}</b><p>{x.text}</p><small>{formatDate(x.createdAt)}</small></div></button>) : <p className="muted notification-empty">No activity notifications yet.</p>}</div> }
 
 
 function Brand({ onClick }) {
@@ -1621,7 +3159,6 @@ function Brand({ onClick }) {
   )
 }
 
-function SettingsIcon() { return <Pencil size={17}/> }
 function Field({ label, value, onChange, type = 'text', placeholder, required, ...rest }) { return <label className="field"><span>{label}</span><input type={type} value={value ?? ''} onChange={onChange} placeholder={placeholder} required={required} {...rest}/></label> }
 function PasswordField({ label, value, onChange, required }) { const [show, setShow] = useState(false); return <label className="field"><span>{label}</span><div className="password-wrap"><input type={show ? 'text' : 'password'} value={value} onChange={onChange} required={required}/><button type="button" onClick={() => setShow(!show)}>{show ? 'Hide' : 'Show'}</button></div></label> }
 function SelectField({ label, value, onChange, options }) { return <label className="field"><span>{label}</span><div className="select-wrap"><select value={value} onChange={onChange} required><option value="">Select</option>{options.map(x => <option key={x} value={x}>{x}</option>)}</select><ChevronDown size={16}/></div></label> }
@@ -1629,3 +3166,4 @@ function TextArea({ label, value, onChange, placeholder, required }) { return <l
 function displayName(profile, email) { return profile?.fullName?.split(' ')[0] || email?.split('@')[0] || 'there' }
 function initials(name) { return (name || 'ST').split(' ').filter(Boolean).slice(0, 2).map(x => x[0]).join('').toUpperCase() }
 function formatDate(value) { if (!value) return '—'; const d = new Date(value); return Number.isNaN(d.getTime()) ? value : d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) }
+function formatTime(value) { if (!value) return ''; const d = new Date(value); return Number.isNaN(d.getTime()) ? '' : d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true }) }

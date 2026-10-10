@@ -228,7 +228,7 @@ button:disabled{cursor:not-allowed;opacity:.55}
 .status{display:inline-flex;align-items:center;padding:5px 8px;border-radius:999px;background:#12243a;color:#9db4cc;font-size:9px;font-weight:850;letter-spacing:.05em;text-transform:uppercase;white-space:nowrap}
 .status-pending,.status-pending_payment{color:#ffd789;background:rgba(255,203,112,.08)}
 .status-held,.status-paid,.status-started{color:#77e3cf;background:rgba(112,230,207,.08)}
-.status-released,.status-completed,.status-approved,.status-selected{color:#90b2ff;background:rgba(140,167,255,.08)}
+.status-released,.status-completed,.status-reviewed,.status-approved,.status-selected{color:#90b2ff;background:rgba(140,167,255,.08)}
 .status-rejected,.status-failed,.status-cancelled,.status-disputed{color:#ff9eaa;background:rgba(255,111,128,.08)}
 .button-row{display:flex;gap:7px}
 .table-wrap{overflow:auto}
@@ -466,4 +466,296 @@ button:disabled{cursor:not-allowed;opacity:.55}
     .application-actions>*{flex:1}
     .toast{left:12px;right:12px;bottom:12px}
     .notification-panel{width:calc(100vw - 24px)}
+}
+
+/* Payment history enhancements */
+.chat-action-btn {
+  width: 34px;
+  height: 34px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: rgba(140,167,255,.08);
+  color: #9cb1ff;
+  transition: all .2s ease;
+}
+.chat-action-btn:hover {
+  background: rgba(140,167,255,.2);
+  color: #c4d4ff;
+  transform: translateY(-1px);
+  border-color: rgba(140,167,255,.4);
+}
+.payment-action-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.btn-pay-green {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 6px 12px;
+  border-radius: 9px;
+  background: linear-gradient(135deg, #10b981, #059669);
+  color: #fff;
+  border: 1px solid #10b981;
+  font-size: 11px;
+  font-weight: 800;
+  cursor: pointer;
+  transition: all .2s ease;
+  box-shadow: 0 4px 14px rgba(16,185,129,.2);
+}
+.btn-pay-green:hover:not(:disabled) {
+  transform: translateY(-1px);
+  box-shadow: 0 6px 18px rgba(16,185,129,.35);
+}
+.btn-cancel-red {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 6px 12px;
+  border-radius: 9px;
+  background: rgba(239,68,68,.12);
+  color: #f87171;
+  border: 1px solid rgba(239,68,68,.3);
+  font-size: 11px;
+  font-weight: 800;
+  cursor: pointer;
+  transition: all .2s ease;
+}
+.btn-cancel-red:hover:not(:disabled) {
+  background: rgba(239,68,68,.22);
+  border-color: rgba(239,68,68,.5);
+  transform: translateY(-1px);
+}
+.payment-confirmed-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 9px;
+  border-radius: 999px;
+  background: rgba(16,185,129,.1);
+  color: #34d399;
+  font-size: 10px;
+  font-weight: 800;
+}
+.payment-cancelled-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 9px;
+  border-radius: 999px;
+  background: rgba(239,68,68,.1);
+  color: #f87171;
+  font-size: 10px;
+  font-weight: 800;
+}
+.gateway-badge {
+  display: inline-block;
+  padding: 3px 8px;
+  border-radius: 7px;
+  background: rgba(255,255,255,.04);
+  border: 1px solid var(--line);
+  color: #9cb1ff;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: .05em;
+}
+
+/* bKash Payment Gateway Modal */
+.bkash-banner {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 16px;
+  border-radius: 14px;
+  background: linear-gradient(135deg, #e2136e, #9b0b4b);
+  color: #fff;
+  margin-bottom: 16px;
+  box-shadow: 0 8px 24px rgba(226,19,110,.25);
+}
+.bkash-badge {
+  background: #fff;
+  color: #e2136e;
+  font-weight: 900;
+  font-size: 14px;
+  padding: 6px 10px;
+  border-radius: 8px;
+  letter-spacing: -.02em;
+}
+.bkash-banner strong {
+  display: block;
+  font-size: 14px;
+}
+.bkash-banner small {
+  opacity: .85;
+  font-size: 11px;
+}
+.bkash-service-info {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 13px;
+  background: rgba(255,255,255,.02);
+  margin-bottom: 16px;
+}
+.bkash-service-info span {
+  display: block;
+  color: #7891aa;
+  font-size: 10px;
+  text-transform: uppercase;
+}
+.bkash-service-info strong {
+  display: block;
+  margin-top: 3px;
+  font-size: 12px;
+  color: #eaf3ff;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.bkash-actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 8px;
+}
+.btn-bkash-confirm {
+  flex: 1;
+  background: linear-gradient(135deg, #10b981, #059669) !important;
+  color: #fff !important;
+}
+
+/* Demo Chat Modal */
+.demo-chat-box {
+  display: flex;
+  flex-direction: column;
+  height: 440px;
+}
+.demo-chat-header-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--line);
+  margin-bottom: 12px;
+}
+.demo-chat-user-info {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.demo-chat-user-info strong {
+  display: block;
+  font-size: 13px;
+}
+.demo-chat-user-info small {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  color: #71e2cc;
+  font-size: 10px;
+}
+.chat-online-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #10b981;
+}
+.demo-chat-pill {
+  padding: 4px 8px;
+  border-radius: 999px;
+  background: rgba(140,167,255,.1);
+  color: #9cb1ff;
+  font-size: 10px;
+  font-weight: 800;
+}
+.demo-chat-body {
+  flex: 1;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 6px 4px;
+}
+.demo-chat-notice {
+  text-align: center;
+  margin-bottom: 8px;
+}
+.demo-chat-notice span {
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: rgba(255,255,255,.04);
+  color: #6d8ba7;
+  font-size: 10px;
+}
+.chat-bubble-row {
+  display: flex;
+  width: 100%;
+}
+.chat-bubble-row.me {
+  justify-content: flex-end;
+}
+.chat-bubble-row.them {
+  justify-content: flex-start;
+}
+.chat-bubble {
+  max-width: 78%;
+  padding: 10px 13px;
+  border-radius: 14px;
+  font-size: 12px;
+  line-height: 1.5;
+}
+.bubble-me {
+  background: linear-gradient(135deg, #75e7d2, #8eb3ff);
+  color: #06101d;
+  border-bottom-right-radius: 4px;
+  font-weight: 550;
+}
+.bubble-me small {
+  display: block;
+  text-align: right;
+  font-size: 9px;
+  color: rgba(6,16,29,.6);
+  margin-top: 3px;
+}
+.bubble-them {
+  background: #0f2238;
+  border: 1px solid var(--line);
+  color: #eaf3ff;
+  border-bottom-left-radius: 4px;
+}
+.bubble-them small {
+  display: block;
+  font-size: 9px;
+  color: #6885a3;
+  margin-top: 3px;
+}
+.typing-indicator span {
+  font-style: italic;
+  color: #8da4bc;
+  font-size: 11px;
+}
+.demo-chat-footer {
+  display: flex;
+  gap: 8px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+  margin-top: 8px;
+}
+.demo-chat-footer input {
+  flex: 1;
+  height: 42px;
+  border: 1px solid var(--line);
+  border-radius: 11px;
+  background: #091729;
+  color: var(--text);
+  padding: 0 13px;
+  outline: none;
+}
+.demo-chat-footer input:focus {
+  border-color: rgba(112,230,207,.55);
 }

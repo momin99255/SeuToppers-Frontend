@@ -131,6 +131,13 @@ export const api = {
     interest: (id, message) =>
         json('POST', `/help/${id}/interest`, { message }),
 
+    // Remove the current teacher's interest from a request.
+    // Backend must expose DELETE /help/{id}/interest for this to work.
+    removeInterest: id =>
+        request(`/help/${id}/interest`, {
+            method: 'DELETE'
+        }),
+
     selectTeacher: (id, teacherId) =>
         json('POST', `/help/${id}/select-teacher`, { teacherId }),
 
@@ -170,11 +177,28 @@ export const api = {
     reviewClass: (id, body) =>
         json('POST', `/classes/${id}/review`, body),
 
+    myReviews: () =>
+        request('/reviews/mine'),
+
+    myTeacherReviews: () =>
+        request('/reviews/teacher'),
+
+    teacherReviews: teacherId =>
+        request(`/reviews/teacher/${teacherId}`),
+
     myPayments: () =>
         request('/payments/mine'),
 
     initiatePayment: classId =>
         request(`/payments/${classId}/initiate`, {
+            method: 'POST'
+        }),
+
+    payPayment: (id, body) =>
+        json('POST', `/payments/${id}/pay`, body),
+
+    cancelPayment: id =>
+        request(`/payments/${id}/cancel`, {
             method: 'POST'
         }),
 
