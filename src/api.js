@@ -1,6 +1,55 @@
 const BASE = (import.meta.env.VITE_API_BASE_URL || 'http://localhost:8080/api').replace(/\/$/, '')
 
+// In-memory cache for GET requests
+const cache = new Map()
+
+export function clearApiCache(prefix = '') {
+    if (!prefix) {
+        cache.clear()
+        return
+    }
+    for (const key of cache.keys()) {
+        if (key.includes(prefix)) {
+            cache.delete(key)
+        }
+    }
+}
+
+function invalidateForMutation(path) {
+    if (path.includes('/student/profile')) {
+        clearApiCache('/student/profile')
+    } else if (path.includes('/teacher')) {
+        clearApiCache('/teacher')
+    } else if (path.includes('/classes')) {
+        clearApiCache('/classes')
+        clearApiCache('/payments')
+    } else if (path.includes('/payments')) {
+        clearApiCache('/payments')
+        clearApiCache('/classes')
+    } else if (path.includes('/help')) {
+        clearApiCache('/help')
+    } else if (path.includes('/reviews')) {
+        clearApiCache('/reviews')
+        clearApiCache('/teacher')
+    } else if (path.includes('/notifications')) {
+        clearApiCache('/notifications')
+    } else if (path.includes('/admin')) {
+        clearApiCache('/admin')
+    }
+}
+
 async function request(path, options = {}) {
+    const method = (options.method || 'GET').toUpperCase()
+    const isGet = method === 'GET'
+
+    // Check cache for GET requests unless explicitly skipped
+    if (isGet && !options.skipCache) {
+        const cached = cache.get(path)
+        if (cached && Date.now() < cached.expiresAt) {
+            return cached.data
+        }
+    }
+
     const headers = new Headers(options.headers || {})
     const token = localStorage.getItem('seutoppers_token')
 
@@ -31,6 +80,16 @@ async function request(path, options = {}) {
         throw new Error(message)
     }
 
+    // Cache GET response
+    if (isGet && !options.skipCache) {
+        cache.set(path, {
+            data,
+            expiresAt: Date.now() + (options.cacheTtl || 60000)
+        })
+    } else if (!isGet) {
+        invalidateForMutation(path)
+    }
+
     return data
 }
 
@@ -41,6 +100,8 @@ const json = (method, path, body) =>
     })
 
 export const api = {
+    clearCache: clearApiCache,
+
     health: () => request('/actuator/health'),
 
     login: body => json('POST', '/auth/login', body),

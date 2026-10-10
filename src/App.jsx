@@ -4,7 +4,8 @@ import {
   ArrowRight, Bell, BookOpen, CalendarDays, Check, ChevronDown, ChevronRight, CircleDollarSign,
   ClipboardList, Clock3, FileText, GraduationCap, Home, LayoutDashboard, LogIn, LogOut,
   Menu, MessageCircle, Search, ShieldCheck, Star, UserRound, Users, WalletCards,
-  X, Upload, Sparkles, Ban, CheckCircle2, AlertCircle, Eye, Plus, RefreshCw, LockKeyhole, Send
+  X, Upload, Sparkles, Ban, CheckCircle2, AlertCircle, Eye, Plus, RefreshCw, LockKeyhole, Send,
+  Award, HelpCircle, CreditCard, Lock
 } from 'lucide-react'
 import { api, fileUrl } from './api'
 
@@ -262,22 +263,59 @@ function AuthRouter({ page, go, login, notify, busy }) {
 
 function AuthFrame({ kicker, title, children, go }) {
   return <main className="auth-page">
-    <section className="auth-showcase"><button className="brand brand-large" onClick={() => go('login')}>
-  <span className="brand-mark">
-    <img src="/SeuToppersFavicon.png" alt="SeuToppers" />
-  </span>
-      <span>Seu<span>Toppers</span></span>
-    </button>
-      <div className="showcase-copy">
+    <section className="auth-showcase">
+      {/* Section 1: Logo & Brand */}
+      <div className="showcase-brand-section">
+        <button className="brand brand-large" onClick={() => go('login')}>
+          <span className="brand-mark">
+            <img src="/SeuToppersFavicon.png" alt="SeuToppers" />
+          </span>
+          <span>Seu<span>Toppers</span></span>
+        </button>
+      </div>
+
+      {/* Section 2: Middle Content */}
+      <div className="showcase-content-section showcase-copy">
         <span className="eyebrow"><span className="eyebrow-dot"/> SEU student network</span>
         <h1>One account.<br/><em>Every learning path.</em></h1>
         <p>Find peer teachers, ask for academic help, book a class and build your teaching profile inside one focused SEU community.</p>
-        <div className="showcase-list"><span><Check size={16}/> SEU email verification</span><span><Check size={16}/> Role-based access</span><span><Check size={16}/> Payment and class tracking</span></div>
+        <div className="showcase-list">
+          <span><Check size={16}/> SEU email verification</span>
+          <span><Check size={16}/> Role-based access</span>
+          <span><Check size={16}/> Payment and class tracking</span>
+        </div>
       </div>
-      <div className="showcase-orb orb-left"/><div className="showcase-orb orb-right"/>
-      <div className="showcase-card"><div><span>Profile completion</span><strong>80%</strong></div><div className="progress"><i style={{ width: '80%' }}/></div><small>Unlock requests and teacher applications</small></div>
+
+      {/* Section 3: Profile Progress Graph */}
+      <div className="showcase-graph-section showcase-card">
+        <div>
+          <span>Profile completion</span>
+          <strong>80%</strong>
+        </div>
+        <div className="progress">
+          <i style={{ width: '80%' }}/>
+        </div>
+        <small>Unlock requests and teacher applications</small>
+      </div>
+
+      <div className="showcase-orb orb-left"/>
+      <div className="showcase-orb orb-right"/>
     </section>
-    <section className="auth-panel"><div className="auth-card"><div className="auth-kicker">{kicker}</div><h2>{title}</h2>{children}</div></section>
+    <section className="auth-panel">
+      <div className="auth-card">
+        <div className="mobile-auth-brand">
+          <button className="brand brand-large" onClick={() => go('login')}>
+            <span className="brand-mark">
+              <img src="/SeuToppersFavicon.png" alt="SeuToppers" />
+            </span>
+            <span>Seu<span>Toppers</span></span>
+          </button>
+        </div>
+        <div className="auth-kicker">{kicker}</div>
+        <h2>{title}</h2>
+        {children}
+      </div>
+    </section>
   </main>
 }
 
@@ -307,12 +345,14 @@ function Login({ go, login, notify, busy }) {
         }
       })
 
+      const targetWidth = Math.min(Math.max(container.offsetWidth || 400, 240), 400)
       window.google.accounts.id.renderButton(container, {
         theme: 'outline',
         size: 'large',
-        width: 400,
+        width: targetWidth,
         text: 'continue_with',
-        shape: 'rectangular'
+        shape: 'rectangular',
+        logo_alignment: 'left'
       })
     }
 
@@ -333,10 +373,15 @@ function Login({ go, login, notify, busy }) {
 
   const submit = async e => {
     e.preventDefault(); setError('')
-    if (!email.trim().toLowerCase().endsWith('@seu.edu.bd')) return setError('Use your SEU email ending with @seu.edu.bd.')
+    const trimmedEmail = email.trim().toLowerCase()
+    if (!trimmedEmail) return setError('Please enter your SEU email address.')
+    if (!trimmedEmail.endsWith('@seu.edu.bd')) {
+      return setError('Only Southeast University email (@seu.edu.bd) is allowed. Please provide your official SEU email.')
+    }
+    if (!password) return setError('Please enter your password.')
     setSubmitting(true)
     try {
-      login(await busy(() => api.login({ email: email.trim().toLowerCase(), password })))
+      login(await busy(() => api.login({ email: trimmedEmail, password })))
       notify('Welcome back to SeuToppers.')
     } catch (e) {
       setError(e.message)
@@ -347,12 +392,14 @@ function Login({ go, login, notify, busy }) {
   return <AuthFrame kicker="Welcome back" title="Log in to SeuToppers" go={go}>
     <div className="auth-intro"><b>Built for the SEU community</b><p>Students can find teachers, request help, book classes and track learning payments.</p></div>
     <form className="form" onSubmit={submit}>
-      <Field label="SEU email" value={email} onChange={e => setEmail(e.target.value)} placeholder="name@seu.edu.bd" type="email" required />
+      <Field label="SEU email" value={email} onChange={e => setEmail(e.target.value)} placeholder="enter your SEU mail" type="email" required />
       <PasswordField label="Password" value={password} onChange={e => setPassword(e.target.value)} required />
       <div className="form-row end"><button type="button" className="link" onClick={() => go('forgot')}>Forgot password?</button></div>
       <ErrorBox error={error}/><button className="primary full" disabled={submitting}>{submitting ? <Spinner/> : <>Log in <ArrowRight size={17}/></>}</button>
       <div className="auth-divider"><span>OR</span></div>
-      <div id="google-login-button" className="google-login-button" />
+      <div className="google-login-container">
+        <div id="google-login-button" className="google-login-button" />
+      </div>
     </form>
     <p className="auth-switch">New to SeuToppers? <button className="link" onClick={() => go('register')}>Create an account</button></p>
   </AuthFrame>
@@ -368,13 +415,14 @@ function Register({ go, notify, busy }) {
   const submit = async e => {
     e.preventDefault()
     setError('')
-
-    if (!email.trim().toLowerCase().endsWith('@seu.edu.bd')) {
-      return setError('Registration is restricted to an SEU email address.')
+    const trimmedEmail = email.trim().toLowerCase()
+    if (!trimmedEmail) return setError('Please enter your SEU email address.')
+    if (!trimmedEmail.endsWith('@seu.edu.bd')) {
+      return setError('Only Southeast University email (@seu.edu.bd) is allowed for registration.')
     }
-
+    if (!password) return setError('Please choose a secure password.')
     if (password !== confirm) {
-      return setError('Passwords do not match.')
+      return setError('Passwords do not match. Please ensure both password fields are identical.')
     }
 
     setSubmitting(true)
@@ -382,7 +430,7 @@ function Register({ go, notify, busy }) {
     try {
       await busy(() =>
           api.register({
-            email: email.trim().toLowerCase(),
+            email: trimmedEmail,
             password,
             confirmPassword: confirm
           })
@@ -390,7 +438,7 @@ function Register({ go, notify, busy }) {
 
       localStorage.setItem(
           'seutoppers_pending_email',
-          email.trim().toLowerCase()
+          trimmedEmail
       )
 
       notify('Verification code sent to your SEU email.')
@@ -404,7 +452,7 @@ function Register({ go, notify, busy }) {
 
   return <AuthFrame kicker="Join SeuToppers" title="Create your student account" go={go}>
     <form className="form" onSubmit={submit}>
-      <Field label="SEU email" value={email} onChange={e => setEmail(e.target.value)} placeholder="name@seu.edu.bd" type="email" required />
+      <Field label="SEU email" value={email} onChange={e => setEmail(e.target.value)} placeholder="enter your SEU mail" type="email" required />
       <PasswordField label="Password" value={password} onChange={e => setPassword(e.target.value)} required />
       <PasswordField label="Confirm password" value={confirm} onChange={e => setConfirm(e.target.value)} required />
       <ErrorBox error={error}/>
@@ -412,6 +460,16 @@ function Register({ go, notify, busy }) {
         {submitting ? <Spinner/> : <>Continue <ArrowRight size={17}/></>}
       </button>
     </form>
+    <div className="auth-guidance">
+      <div className="auth-guidance-item">
+        <CheckCircle2 size={15}/>
+        <span><strong>SEU Community Only:</strong> Registration requires an active Southeast University email address.</span>
+      </div>
+      <div className="auth-guidance-item">
+        <ShieldCheck size={15}/>
+        <span><strong>Verification:</strong> A 6-digit verification code will be sent to your university inbox to activate your account.</span>
+      </div>
+    </div>
     <p className="auth-switch">Already registered? <button className="link" onClick={() => go('login')}>Log in</button></p>
   </AuthFrame>
 }
@@ -559,7 +617,21 @@ function AppShell({ auth, page, go, logout, notify, busy, notifications }) {
   const displayName = profile?.fullName || auth.email?.split('@')[0] || 'User'
   const profileImage = profile?.profileImage ? fileUrl(profile.profileImage) : ''
 
+  const mobileNavItems = auth.role === 'ADMIN' ? [
+    ['dashboard', 'Overview', LayoutDashboard],
+    ['admin-users', 'Users', Users],
+    ['admin-classes', 'Classes', CalendarDays],
+    ['admin-payments', 'Payments', CreditCard]
+  ] : [
+    ['dashboard', 'Home', LayoutDashboard],
+    ['requests', 'Requests', MessageCircle],
+    [teacher ? 'service-given' : 'service-taken', 'Classes', BookOpen],
+    ['payments', 'Payments', CreditCard],
+    ['profile', 'Profile', UserRound]
+  ]
+
   return <div className="app-shell">
+    {open && <div className="sidebar-backdrop" onClick={() => setOpen(false)} />}
     <aside className={`sidebar ${open ? 'open' : ''}`}>
       <div className="sidebar-top"><Brand onClick={() => { go('dashboard'); setOpen(false) }}/><button className="mobile-close" onClick={() => setOpen(false)}><X size={19}/></button></div>
       <div className="side-account">
@@ -572,9 +644,39 @@ function AppShell({ auth, page, go, logout, notify, busy, notifications }) {
       <div className="sidebar-bottom"><button className="logout" onClick={logout}><LogOut size={18}/><span>Log out</span></button></div>
     </aside>
     <div className="main-shell">
-      <header className="appbar"><button className="mobile-menu" onClick={() => setOpen(true)}><Menu/></button><div className="crumb"><span>{APP}</span><ChevronRight size={15}/><b>{links.find(x => x[0] === page)?.[1] || 'Overview'}</b></div><div className="app-actions"><div className="notification-wrap"><button className="icon-btn" onClick={() => setNotiOpen(v => !v)}><Bell size={18}/>{notifications.items.some(x => !x.read) && <i className="notify-dot"/>}</button>{notiOpen && <NotificationPanel items={notifications.items} markRead={notifications.markRead} markAll={notifications.markAll}/>}</div><span className="role-pill">{teacher ? 'TEACHER + STUDENT' : auth.role}</span><button className="icon-btn" onClick={logout}><LogOut size={17}/></button></div></header>
+      <header className="appbar">
+        <button className="mobile-menu" onClick={() => setOpen(true)}><Menu/></button>
+        <div className="crumb"><span className="crumb-app">{APP}</span><ChevronRight size={15} className="crumb-chevron"/><b>{links.find(x => x[0] === page)?.[1] || 'Overview'}</b></div>
+        <div className="app-actions">
+          <div className="notification-wrap">
+            <button className="icon-btn" onClick={() => setNotiOpen(v => !v)}><Bell size={18}/>{notifications.items.some(x => !x.read) && <i className="notify-dot"/>}</button>
+            {notiOpen && <NotificationPanel items={notifications.items} markRead={notifications.markRead} markAll={notifications.markAll}/>}
+          </div>
+          <span className="role-pill">{teacher ? 'TEACHER + STUDENT' : auth.role}</span>
+          <button className="icon-btn" onClick={logout}><LogOut size={17}/></button>
+        </div>
+      </header>
       <main className="content"><Page page={page} auth={auth} go={go} notify={notify} busy={busy} notifications={notifications}/></main>
     </div>
+    <nav className="mobile-bottom-nav">
+      {mobileNavItems.map(([id, label, Icon]) => {
+        const isActive = page === id || (id === 'service-taken' && (page === 'service-taken' || page === 'service-given'))
+        return (
+          <button
+            key={id}
+            className={`mobile-nav-btn ${isActive ? 'active' : ''}`}
+            onClick={() => {
+              go(id)
+              setOpen(false)
+              window.scrollTo({ top: 0, behavior: 'smooth' })
+            }}
+          >
+            <Icon size={19} />
+            <span>{label}</span>
+          </button>
+        )
+      })}
+    </nav>
   </div>
 }
 
@@ -611,14 +713,14 @@ function DashboardPage({ auth, go, notify }) {
 
   const stats = auth.role === 'TEACHER' ? [
     ['Rating', Number(teacherProfile.data?.rating || 0).toFixed(1), Star],
-    ['Reviews', teacherProfile.data?.totalReviews || 0, Star],
-    ['Services', (classes.data || []).length, BookOpen],
+    ['Reviews', teacherProfile.data?.totalReviews || 0, Award],
+    ['Classes', (classes.data || []).length, BookOpen],
     ['Profile', `${completion.data || 0}%`, UserRound]
   ] : [
     ['Profile', `${completion.data || 0}%`, UserRound],
     ['Classes', (classes.data || []).length, BookOpen],
     ['Teachers', teachers.data?.length || 0, Users],
-    ['Status', completion.data >= 80 ? 'Ready' : 'Complete profile', CheckCircle2]
+    ['Status', (completion.data || 0) >= 80 ? 'Ready' : 'Incomplete', CheckCircle2]
   ]
 
   if (selectedTeacher) {
@@ -631,17 +733,59 @@ function DashboardPage({ auth, go, notify }) {
     )
   }
 
+  const avatar = profile.data?.profileImage ? fileUrl(profile.data.profileImage) : null
+  const greetingName = displayName(profile.data, auth.email)
+
   return (
       <div className="page-stack">
-        <PageHero
-            title={`Good to see you, ${displayName(profile.data, auth.email)}.`}
-            subtitle={auth.role === 'TEACHER'
-                ? 'Manage both sides of your learning journey from one dashboard.'
-                : 'Find a teacher, ask for help or build your teaching profile.'}
-            action={completion.data < 80
-                ? { label: 'Complete profile', onClick: () => window.location.hash = 'profile' }
-                : { label: 'Find a teacher', onClick: () => window.location.hash = 'teachers' }}
-        />
+        <section className="dashboard-hero">
+          <div className="dashboard-hero-content">
+            <div className="dashboard-greeting">
+              <div className="dashboard-avatar-ring">
+                {avatar ? <img src={avatar} alt="User" /> : initials(greetingName)}
+              </div>
+              <div>
+                <span className="eyebrow"><span className="eyebrow-dot" /> SEU TOPPERS · ACADEMIC HUB</span>
+                <h1 className="dashboard-hero-title">Welcome back, {greetingName}!</h1>
+                <p className="dashboard-hero-subtitle">
+                  {auth.role === 'TEACHER'
+                    ? 'Manage your tutoring sessions, track ratings, and accept student requests.'
+                    : 'Connect with top-rated university peer tutors and elevate your academic performance.'}
+                </p>
+              </div>
+            </div>
+
+            <div className="dashboard-hero-actions">
+              {(completion.data || 0) < 80 ? (
+                <button className="primary" onClick={() => go('profile')}>
+                  Complete Profile ({completion.data || 0}%) <ArrowRight size={16}/>
+                </button>
+              ) : (
+                <button className="primary" onClick={() => go('teachers')}>
+                  Find a Teacher <ArrowRight size={16}/>
+                </button>
+              )}
+            </div>
+          </div>
+        </section>
+
+        <div className="quick-actions-bar">
+          <span style={{ fontSize: 11, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.08em', color: '#7891aa' }}>
+            Quick Actions:
+          </span>
+          <button className="quick-action-pill" onClick={() => go('teachers')}>
+            <Users size={14}/> Find Tutors
+          </button>
+          <button className="quick-action-pill" onClick={() => go('create-request')}>
+            <HelpCircle size={14}/> Post Help Request
+          </button>
+          <button className="quick-action-pill" onClick={() => go(auth.role === 'TEACHER' ? 'service-given' : 'service-taken')}>
+            <BookOpen size={14}/> {auth.role === 'TEACHER' ? 'Teaching Classes' : 'My Classes'}
+          </button>
+          <button className="quick-action-pill" onClick={() => go('payments')}>
+            <CreditCard size={14}/> Payments
+          </button>
+        </div>
 
         <div className="stat-grid">
           {stats.map(([label, value, Icon]) => (
@@ -649,13 +793,13 @@ function DashboardPage({ auth, go, notify }) {
           ))}
         </div>
 
-        <section className="section">
+        <section className="section" style={{ animation: 'fadeInUp 0.45s ease-out' }}>
           <SectionHeading
               title="Top ranked teachers"
-              subtitle="Click a teacher or use View Profile to see the full profile."
+              subtitle="Browse top-rated peer tutors and click to inspect their complete profile and student reviews."
               action={
                 <button className="text-button" onClick={() => go('teachers')}>
-                  View all <ArrowRight size={15}/>
+                  View all ({teachers.data?.length || 0}) <ArrowRight size={15}/>
                 </button>
               }
           />
@@ -685,21 +829,21 @@ function DashboardPage({ auth, go, notify }) {
         </section>
 
         <div className="dashboard-grid">
-          <section className="panel promo-panel">
+          <section className="panel promo-panel" style={{ animation: 'fadeInUp 0.5s ease-out' }}>
             <div className="promo-icon"><GraduationCap size={23}/></div>
             <div>
               <span className="eyebrow">TEACHER PATH</span>
               <h3>{auth.role === 'TEACHER' ? 'Your teacher profile is active.' : 'Want to become a teacher?'}</h3>
               <p>{auth.role === 'TEACHER'
-                  ? 'Add your subjects, hourly rate, teaching mode and availability from your profile.'
-                  : 'You need at least 80% student profile completion. The application also requires a 3.80+ CGPA in this frontend.'}</p>
+                  ? 'Update your subjects, hourly rate, teaching mode and availability from your profile.'
+                  : 'Earn by teaching fellow students. Requires 80%+ profile completion and 3.80+ CGPA.'}</p>
             </div>
             <button className="secondary" onClick={() => go(auth.role === 'TEACHER' ? 'profile' : 'teacher-apply')}>
               {auth.role === 'TEACHER' ? 'Edit teaching profile' : 'Apply now'} <ArrowRight size={16}/>
             </button>
           </section>
 
-          <section className="panel mini-chart-panel">
+          <section className="panel mini-chart-panel" style={{ animation: 'fadeInUp 0.5s ease-out' }}>
             <SectionHeading title="Your class activity" subtitle="Current records from the class API."/>
             <MiniActivity classes={classes.data || []}/>
           </section>
@@ -717,27 +861,44 @@ function TeachersPage({ auth, notify }) {
 }
 
 function TeacherProfileView({ teacher, onBack, auth }) {
-  const [interestSubject, setInterestSubject] = useState(teacher.subjects?.[0] || '')
   const rating = Number(teacher.rating || 0)
   const teacherId = teacher.userId || teacher.id
   const reviewsData = useLoad(() => api.teacherReviews(teacherId), [teacherId])
   const reviewsList = Array.isArray(reviewsData.data) ? reviewsData.data : []
 
   return (
-    <div className="page-stack">
-      <button className="back-button" onClick={onBack}>
-        <ChevronRight size={17} className="back-icon" /> Back to teachers
-      </button>
-      <section className="profile-hero panel">
-        <div className="profile-avatar large">
-          {teacher.profileImage ? <img src={fileUrl(teacher.profileImage)} alt="" /> : initials(teacher.fullName)}
+    <div className="page-stack teacher-profile-page" style={{ animation: 'fadeInUp 0.3s ease-out' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <button className="back-button" onClick={onBack} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '8px 16px', borderRadius: 12, background: 'rgba(255,255,255,.04)', border: '1px solid var(--line)', color: '#d0e2f7', fontWeight: 700, cursor: 'pointer' }}>
+          <ChevronRight size={17} style={{ transform: 'rotate(180deg)' }} /> Back
+        </button>
+        <span className="eyebrow"><span className="eyebrow-dot" /> VERIFIED SEU PEER TUTOR</span>
+      </div>
+
+      <section className="profile-hero panel" style={{ background: 'linear-gradient(145deg, rgba(14, 33, 56, 0.95), rgba(7, 18, 31, 0.95))', border: '1px solid rgba(112, 230, 207, 0.25)', boxShadow: '0 20px 60px rgba(0,0,0,0.35)' }}>
+        <div className="profile-avatar large" style={{ width: 88, height: 88, minWidth: 88, borderRadius: 24, overflow: 'hidden' }}>
+          {teacher.profileImage ? <img src={fileUrl(teacher.profileImage)} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : initials(teacher.fullName)}
         </div>
         <div className="profile-main">
-          <span className="eyebrow">PEER TEACHER</span>
-          <h1>{teacher.fullName || 'Teacher'}</h1>
-          <p>{teacher.qualification || teacher.program || 'SEU teacher'} · {teacher.department || 'SEU'}</p>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+            <span className="eyebrow">DEPARTMENT OF {teacher.department?.toUpperCase() || 'SEU'}</span>
+            {teacher.hourlyRate && (
+              <span className="teacher-rating-pill" style={{ color: '#70e6cf', borderColor: 'rgba(112,230,207,.3)', background: 'rgba(112,230,207,.08)' }}>
+                ৳{teacher.hourlyRate} / hour
+              </span>
+            )}
+            {teacher.teachingMode && (
+              <span className="status status-paid" style={{ fontSize: 10 }}>
+                {teacher.teachingMode}
+              </span>
+            )}
+          </div>
+          <h1 style={{ fontSize: 30, letterSpacing: '-0.03em', margin: '6px 0 3px' }}>{teacher.fullName || 'Teacher'}</h1>
+          <p className="muted" style={{ fontSize: 13, margin: '0 0 10px' }}>
+            {teacher.qualification || teacher.program || 'SEU Peer Tutor'} · {teacher.department || 'SEU'} {teacher.batch ? `· Batch ${teacher.batch}` : ''}
+          </p>
           <div className="chips">
-            {(teacher.subjects || []).map(s => <span key={s}>{s}</span>)}
+            {(teacher.subjects || []).map(s => <span key={s} style={{ background: 'rgba(112,230,207,0.08)', borderColor: 'rgba(112,230,207,0.25)', color: '#d2f9f1' }}>{s}</span>)}
           </div>
         </div>
         <div className="rating-box">
@@ -748,64 +909,105 @@ function TeacherProfileView({ teacher, onBack, auth }) {
           <b>{teacher.totalReviews || reviewsList.length || 0} reviews</b>
         </div>
       </section>
+
       <div className="detail-grid">
         <section className="panel">
-          <SectionHeading title="Performance snapshot" subtitle="Only metrics exposed by the current backend are shown." />
+          <SectionHeading title="About & Performance" subtitle="Teacher overview and course specialties." />
+          {teacher.bio ? (
+            <div style={{ padding: '12px 16px', borderRadius: 14, background: 'rgba(255,255,255,.02)', border: '1px solid var(--line)', marginBottom: 16 }}>
+              <span style={{ display: 'block', fontSize: 10, textTransform: 'uppercase', color: '#7ba1c7', fontWeight: 800, marginBottom: 4 }}>About Teacher</span>
+              <p style={{ margin: 0, fontSize: 13, lineHeight: 1.6, color: '#cbe0f8' }}>{teacher.bio}</p>
+            </div>
+          ) : null}
+
           <div className="metric-chart">
             <div className="bar-track">
               <div className="bar-fill" style={{ width: `${Math.max(0, Math.min(100, rating / 5 * 100))}%` }} />
             </div>
             <div className="metric-row">
-              <span>Average rating</span>
+              <span>Overall rating</span>
               <strong>{rating.toFixed(1)} / 5</strong>
             </div>
             <div className="bar-track">
-              <div className="bar-fill" style={{ width: `${Math.min(100, Number(teacher.totalReviews || reviewsList.length || 0) * 5)}%` }} />
+              <div className="bar-fill" style={{ width: `${Math.min(100, Number(teacher.totalReviews || reviewsList.length || 0) * 10)}%` }} />
             </div>
             <div className="metric-row">
-              <span>Review volume</span>
+              <span>Total completed reviews</span>
               <strong>{teacher.totalReviews || reviewsList.length || 0}</strong>
             </div>
           </div>
-          <div className="subject-graph">
+          <div className="subject-graph" style={{ marginTop: 14 }}>
             {(teacher.subjects || []).map((s, i) => (
               <div key={s} className="subject-row">
                 <span>{s}</span>
-                <i style={{ width: `${Math.max(24, 92 - i * 11)}%` }} />
+                <i style={{ width: `${Math.max(28, 92 - i * 11)}%` }} />
               </div>
             ))}
           </div>
         </section>
+
         <section className="panel">
-          <SectionHeading title="Teacher details" />
-          <InfoRow label="Experience" value={teacher.experience || 'Not provided'} />
-          <InfoRow label="Teaching mode" value={teacher.teachingMode || 'Not provided'} />
-          <InfoRow label="Availability" value={teacher.availability || 'Not provided'} />
-          <InfoRow label="Hourly rate" value={teacher.hourlyRate ? `৳${teacher.hourlyRate}` : 'Set after selection'} />
-          <InfoRow label="Location" value={teacher.location || 'SEU community'} />
+          <SectionHeading title="Teaching details" subtitle="Teaching mode, schedule and rates." />
+          <InfoRow label="Experience" value={teacher.experience || 'Experienced SEU peer tutor'} />
+          <InfoRow label="Teaching mode" value={teacher.teachingMode || 'Flexible (Online / In-person)'} />
+          <InfoRow label="Availability" value={teacher.availability || 'Evening / Weekends'} />
+          <InfoRow label="Hourly rate" value={teacher.hourlyRate ? `৳${teacher.hourlyRate}` : 'Negotiable'} />
+          <InfoRow label="Department" value={teacher.department || 'SEU'} />
+          <InfoRow label="Program" value={teacher.program || 'Undergraduate'} />
+          <InfoRow label="Location" value={teacher.location || 'Southeast University'} />
         </section>
       </div>
 
-      <section className="panel" style={{ marginTop: 12 }}>
-        <SectionHeading title="Student reviews" subtitle="Real feedback submitted by students who took classes." />
+      <section className="panel" style={{ marginTop: 14, animation: 'fadeInUp 0.4s ease-out' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
+          <div>
+            <h2 style={{ fontSize: 20, margin: '0 0 4px', fontWeight: 800 }}>Student reviews ({reviewsList.length})</h2>
+            <p className="muted" style={{ margin: 0, fontSize: 13 }}>Genuine feedback submitted by students who took classes with this teacher.</p>
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 12px', borderRadius: 999, background: 'rgba(255,215,0,.1)', border: '1px solid rgba(255,215,0,.25)', color: '#ffd700' }}>
+            <Star size={14} fill="currentColor"/>
+            <strong style={{ fontSize: 13 }}>{rating.toFixed(1)}</strong>
+            <small style={{ color: '#d8c265', fontSize: 11 }}>/ 5.0</small>
+          </div>
+        </div>
+
         <div className="review-grid">
           {reviewsList.map(x => (
-            <article className="review-card" key={x.id}>
-              <div className="review-top">
-                <div>
-                  <b>{x.studentName || 'Student'}</b>
-                  <small>{formatDate(x.createdAt)}</small>
+            <article className="review-card" key={x.id} style={{ padding: 18, borderRadius: 16, background: 'rgba(14, 30, 48, 0.7)', border: '1px solid var(--line)' }}>
+              <div className="review-top" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 10 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                  <div className="profile-avatar" style={{ width: 38, height: 38, minWidth: 38, borderRadius: '50%', overflow: 'hidden' }}>
+                    {x.studentProfileImage ? (
+                      <img src={fileUrl(x.studentProfileImage)} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                    ) : (
+                      initials(x.studentName || 'Student')
+                    )}
+                  </div>
+                  <div>
+                    <b style={{ fontSize: 14, color: '#f0f6ff' }}>{x.studentName || 'Student'}</b>
+                    <small style={{ display: 'block', color: '#7d95b0', fontSize: 11 }}>
+                      {formatDate(x.createdAt)} {formatTime(x.createdAt) ? `· ${formatTime(x.createdAt)}` : ''}
+                    </small>
+                  </div>
                 </div>
-                <Stars value={x.rating} />
+                <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                  <Stars value={x.rating} />
+                  <span style={{ fontSize: 12, fontWeight: 800, color: '#ffd700', marginLeft: 4 }}>{x.rating}.0</span>
+                </div>
               </div>
-              <p>{x.comment}</p>
+              <p style={{ margin: 0, fontSize: 13, lineHeight: 1.6, color: '#d1e3f8' }}>{x.comment}</p>
             </article>
           ))}
         </div>
+
         {!reviewsData.loading && !reviewsList.length && (
-          <p className="muted" style={{ padding: '16px 0', fontSize: '13px' }}>
-            No student reviews submitted for this teacher yet.
-          </p>
+          <div style={{ textAlign: 'center', padding: '36px 16px', background: 'rgba(255,255,255,.015)', borderRadius: 16, border: '1px dashed var(--line)' }}>
+            <Award size={32} style={{ color: '#6d8ba9', margin: '0 auto 8px' }} />
+            <b style={{ display: 'block', fontSize: 15, color: '#e2edfa', marginBottom: 4 }}>No student reviews yet</b>
+            <p className="muted" style={{ margin: 0, fontSize: 13, maxWidth: 440, marginLeft: 'auto', marginRight: 'auto' }}>
+              Classes completed with this teacher will show verified ratings and feedback here.
+            </p>
+          </div>
         )}
       </section>
     </div>
@@ -1825,17 +2027,39 @@ function ProfilePage({ auth, notify, busy }) {
   const set = (k, v) => setForm(x => ({ ...x, [k]: v }))
   const save = async e => {
     e.preventDefault()
-    setSaving(true)
     setError('')
+
+    // Validation
+    const cleanPhone = (form.phone || '').replace(/\D/g, '')
+    if (cleanPhone.length !== 11) {
+      return setError('Phone number must be exactly 11 numeric digits (e.g. 017XXXXXXXX).')
+    }
+    if (!cleanPhone.startsWith('01')) {
+      return setError('Phone number must start with a valid Bangladeshi prefix (01XXXXXXXXX).')
+    }
+    if (!form.fullName || form.fullName.trim().length < 3) {
+      return setError('Full name must be at least 3 characters long.')
+    }
+    if (!form.department) {
+      return setError('Please select your academic department.')
+    }
+    if (!form.batch || !form.batch.trim()) {
+      return setError('Please enter your batch.')
+    }
+    if (!form.program) {
+      return setError('Please select your program.')
+    }
+
+    setSaving(true)
     try {
       let image = form.profileImage
       if (file) image = await api.uploadProfile(file)
-      const studentPayload = { fullName: form.fullName, phone: form.phone, profileImage: image, department: form.department, program: form.program, batch: form.batch, location: form.location, bio: form.bio }
+      const studentPayload = { fullName: form.fullName.trim(), phone: cleanPhone, profileImage: image, department: form.department, program: form.program, batch: form.batch.trim(), location: form.location?.trim() || '', bio: form.bio?.trim() || '' }
       await api.updateStudentProfile(studentPayload)
       if (auth.role === 'TEACHER') {
-        await api.updateTeacherProfile({ ...studentPayload, qualification: form.qualification, experience: form.experience, subjects: form.subjects.split(',').map(x => x.trim()).filter(Boolean), hourlyRate: Number(form.hourlyRate) || null, teachingMode: form.teachingMode, availability: form.availability })
+        await api.updateTeacherProfile({ ...studentPayload, qualification: form.qualification?.trim(), experience: form.experience?.trim(), subjects: form.subjects.split(',').map(x => x.trim()).filter(Boolean), hourlyRate: Number(form.hourlyRate) || null, teachingMode: form.teachingMode?.trim(), availability: form.availability?.trim() })
       }
-      setForm(x => ({ ...x, profileImage: image }))
+      setForm(x => ({ ...x, phone: cleanPhone, profileImage: image }))
       setFile(null)
       await student.reload()
       await completion.reload()
@@ -1860,7 +2084,22 @@ function ProfilePage({ auth, notify, busy }) {
         detail: { ...student.data, fullName: form.fullName, profileImage: previewUrl }
       }))
     }
-  }}/></label><small className="hint">PNG, JPG or WEBP</small></div></div><div className="form-grid"><Field label="Full name" value={form.fullName} onChange={e => set('fullName', e.target.value)} required/><Field label="Phone" value={form.phone} onChange={e => set('phone', e.target.value)} required/><SelectField label="Department" value={form.department} onChange={e => set('department', e.target.value)} options={departments}/><Field label="Batch" value={form.batch} onChange={e => set('batch', e.target.value)} required/><SelectField label="Program" value={form.program} onChange={e => set('program', e.target.value)} options={programs}/><Field label="Location" value={form.location} onChange={e => set('location', e.target.value)}/></div><TextArea label="Bio" value={form.bio} onChange={e => set('bio', e.target.value)} placeholder="Tell the SEU community a little about you."/></section><aside className="profile-side"><section className="panel completion-card"><span className="eyebrow">PROFILE COMPLETION</span><div className="completion-number">{completion.data || 0}%</div><div className="progress"><i style={{ width: `${completion.data || 0}%` }}/></div><p>{completion.data >= 80 ? 'You can post help requests and apply to become a teacher.' : 'Reach 80% to unlock help requests and teacher applications.'}</p></section>{auth.role === 'TEACHER' && <section className="panel"><SectionHeading title="Teaching profile" subtitle="Visible to students when they visit your teacher profile."/><div className="form"><Field label="Qualification" value={form.qualification} onChange={e => set('qualification', e.target.value)}/><Field label="Experience" value={form.experience} onChange={e => set('experience', e.target.value)}/><Field label="Subjects" value={form.subjects} onChange={e => set('subjects', e.target.value)} placeholder="Java, DBMS, AI"/><div className="form-grid"><Field label="Hourly rate" type="number" value={form.hourlyRate} onChange={e => set('hourlyRate', e.target.value)}/><Field label="Teaching mode" value={form.teachingMode} onChange={e => set('teachingMode', e.target.value)} placeholder="Online / Offline"/></div><Field label="Availability" value={form.availability} onChange={e => set('availability', e.target.value)} placeholder="Evening, weekends"/></div></section>}<section className="panel privacy-card"><LockKeyhole size={18}/><div><b>Profile privacy</b><p>Best-effort browser privacy is enabled on this page. Browsers cannot guarantee screenshot prevention.</p></div></section></aside></div><div className="save-row"><ErrorBox error={error}/><button className="secondary" type="button" onClick={() => student.reload()}><RefreshCw size={16}/> Refresh</button><button className="primary" disabled={saving}>{saving ? <Spinner/> : <><Check size={16}/> Save profile</>}</button></div></form></div>
+  }}/></label><small className="hint">PNG, JPG or WEBP</small></div></div><div className="form-grid">
+    <Field label="Full name" value={form.fullName} onChange={e => set('fullName', e.target.value)} required/>
+    <div>
+      <Field label="Phone (11 digits, numbers only)" value={form.phone} onChange={e => set('phone', e.target.value.replace(/\D/g, '').slice(0, 11))} placeholder="01XXXXXXXXX" required/>
+      <div className={`phone-field-info ${form.phone.length === 11 && form.phone.startsWith('01') ? 'valid' : form.phone.length > 0 ? 'invalid' : ''}`}>
+        <span>{form.phone.length === 11 && form.phone.startsWith('01') ? '✓ Valid Bangladeshi number' : 'Must be 11 digits starting with 01'}</span>
+        <b>{form.phone.length}/11</b>
+      </div>
+    </div>
+    <SelectField label="Department" value={form.department} onChange={e => set('department', e.target.value)} options={departments}/>
+    <Field label="Batch" value={form.batch} onChange={e => set('batch', e.target.value)} placeholder="e.g. 54" required/>
+    <SelectField label="Program" value={form.program} onChange={e => set('program', e.target.value)} options={programs}/>
+    <Field label="Location (Optional)" value={form.location} onChange={e => set('location', e.target.value)} placeholder="e.g. Tejgaon, Dhaka"/>
+  </div>
+  <TextArea label="Bio (Optional)" value={form.bio} onChange={e => set('bio', e.target.value)} placeholder="Tell the SEU community a little about you (optional)."/>
+  </section><aside className="profile-side"><section className="panel completion-card"><span className="eyebrow">PROFILE COMPLETION</span><div className="completion-number">{completion.data || 0}%</div><div className="progress"><i style={{ width: `${completion.data || 0}%` }}/></div><p>{(completion.data || 0) >= 80 ? 'You can post help requests and apply to become a teacher.' : 'Reach 80% to unlock help requests and teacher applications.'}</p></section>{auth.role === 'TEACHER' && <section className="panel"><SectionHeading title="Teaching profile" subtitle="Visible to students when they visit your teacher profile."/><div className="form"><Field label="Qualification" value={form.qualification} onChange={e => set('qualification', e.target.value)}/><Field label="Experience" value={form.experience} onChange={e => set('experience', e.target.value)}/><Field label="Subjects" value={form.subjects} onChange={e => set('subjects', e.target.value)} placeholder="Java, DBMS, AI"/><div className="form-grid"><Field label="Hourly rate" type="number" value={form.hourlyRate} onChange={e => set('hourlyRate', e.target.value)}/><Field label="Teaching mode" value={form.teachingMode} onChange={e => set('teachingMode', e.target.value)} placeholder="Online / Offline"/></div><Field label="Availability" value={form.availability} onChange={e => set('availability', e.target.value)} placeholder="Evening, weekends"/></div></section>}<section className="panel privacy-card"><LockKeyhole size={18}/><div><b>Profile privacy</b><p>Best-effort browser privacy is enabled on this page. Browsers cannot guarantee screenshot prevention.</p></div></section></aside></div><div className="save-row"><ErrorBox error={error}/><button className="secondary" type="button" onClick={() => student.reload()}><RefreshCw size={16}/> Refresh</button><button className="primary" disabled={saving}>{saving ? <Spinner/> : <><Check size={16}/> Save profile</>}</button></div></form></div>
 }
 
 function AdminPage({ page, auth, go, notify, busy, notifications }) {
@@ -2549,29 +2788,28 @@ function RequestCard({
 
         </div>
 
-        <div className="request-student">
-
+        <div className="request-requester" style={{ display: 'flex', alignItems: 'center', gap: 12, margin: '14px 0 10px' }}>
           <div
               className="profile-avatar request-student-avatar"
               style={{
-                width: 46,
-                height: 46,
-                minWidth: 46,
-                minHeight: 46,
+                width: 44,
+                height: 44,
+                minWidth: 44,
                 borderRadius: '50%',
-                overflow: 'hidden'
+                overflow: 'hidden',
+                border: '1.5px solid rgba(112,230,207,0.35)',
+                boxShadow: '0 4px 12px rgba(0,0,0,0.2)'
               }}
           >
             {item.studentProfileImage ? (
                 <img
                     src={fileUrl(item.studentProfileImage)}
-                    alt=""
+                    alt={item.studentName || 'Requester'}
                     style={{
                       width: '100%',
                       height: '100%',
                       display: 'block',
-                      objectFit: 'cover',
-                      borderRadius: '50%'
+                      objectFit: 'cover'
                     }}
                 />
             ) : (
@@ -2580,15 +2818,10 @@ function RequestCard({
           </div>
 
           <div>
-            <strong>
+            <b style={{ display: 'block', fontSize: 15, fontWeight: 750, color: '#eef6ff' }}>
               {item.studentName || 'Student'}
-            </strong>
-
-            <span>
-              Student
-            </span>
+            </b>
           </div>
-
         </div>
 
         <p>
@@ -2608,7 +2841,7 @@ function RequestCard({
 
           <span>
             <CircleDollarSign size={14}/>
-            ৳100
+            ৳{item.budget || 100}
           </span>
         </div>
 
@@ -2694,26 +2927,30 @@ function InterestModal({ requestId, interests = [], requestOwnerId, currentUserI
 
   if (profileTeacher) {
     const rating = Number(profileTeacher.rating || 0)
+    const currentInterest = validInterests.find(
+        item => item.teacherId === (profileTeacher.userId || profileTeacher.id)
+    )
 
     return (
-        <Modal title="Teacher profile" onClose={onClose}>
-          <div className="interest-profile-view">
+        <Modal title="Teacher Profile Details" onClose={onClose}>
+          <div className="interest-profile-modal-view">
             <button
                 type="button"
                 className="secondary small"
                 onClick={() => setProfileTeacher(null)}
+                style={{ alignSelf: 'flex-start', display: 'inline-flex', alignItems: 'center', gap: 6 }}
             >
               ← Back to interested teachers
             </button>
 
-            <div className="interest-profile-header">
+            <div className="interest-profile-top-card">
               <div
                   className="profile-avatar large"
                   style={{
-                    width: 82,
-                    height: 82,
-                    minWidth: 82,
-                    borderRadius: '50%',
+                    width: 76,
+                    height: 76,
+                    minWidth: 76,
+                    borderRadius: 20,
                     overflow: 'hidden'
                   }}
               >
@@ -2725,8 +2962,7 @@ function InterestModal({ requestId, interests = [], requestOwnerId, currentUserI
                           width: '100%',
                           height: '100%',
                           objectFit: 'cover',
-                          display: 'block',
-                          borderRadius: '50%'
+                          display: 'block'
                         }}
                     />
                 ) : (
@@ -2735,73 +2971,87 @@ function InterestModal({ requestId, interests = [], requestOwnerId, currentUserI
               </div>
 
               <div>
-                <span className="eyebrow">PEER TEACHER</span>
-                <h2>{profileTeacher.fullName || 'Teacher'}</h2>
-                <p className="muted">
+                <span className="eyebrow"><span className="eyebrow-dot" /> VERIFIED PEER TUTOR</span>
+                <h2 style={{ fontSize: 20, margin: '4px 0 2px', fontWeight: 800 }}>{profileTeacher.fullName || 'Teacher'}</h2>
+                <p className="muted" style={{ fontSize: 12, margin: 0 }}>
                   {profileTeacher.qualification ||
                       profileTeacher.program ||
-                      'SEU teacher'}
+                      'SEU Peer Tutor'}
                   {' · '}
                   {profileTeacher.department || 'SEU'}
+                  {profileTeacher.batch ? ` · Batch ${profileTeacher.batch}` : ''}
                 </p>
               </div>
             </div>
 
-            <div className="chips">
-              {(profileTeacher.subjects || []).map(subject => (
-                  <span key={subject}>{subject}</span>
-              ))}
+            <div className="interest-profile-metrics">
+              <div className="interest-metric-box">
+                <span>Rating</span>
+                <strong style={{ color: '#ffd700' }}>★ {rating.toFixed(1)} / 5</strong>
+              </div>
+              <div className="interest-metric-box">
+                <span>Reviews</span>
+                <strong>{profileTeacher.totalReviews || 0} reviews</strong>
+              </div>
+              <div className="interest-metric-box">
+                <span>Rate</span>
+                <strong style={{ color: '#70e6cf' }}>{profileTeacher.hourlyRate ? `৳${profileTeacher.hourlyRate}/hr` : 'Flexible'}</strong>
+              </div>
             </div>
 
-            <div className="detail-grid">
-              <section className="panel">
-                <SectionHeading
-                    title="Teacher details"
-                    subtitle="Review the teacher before accepting."
-                />
-                <InfoRow
-                    label="Rating"
-                    value={`${rating.toFixed(1)} / 5`}
-                />
-                <InfoRow
-                    label="Reviews"
-                    value={profileTeacher.totalReviews || 0}
-                />
-                <InfoRow
-                    label="Experience"
-                    value={profileTeacher.experience || 'Not provided'}
-                />
-                <InfoRow
-                    label="Teaching mode"
-                    value={profileTeacher.teachingMode || 'Not provided'}
-                />
-                <InfoRow
-                    label="Availability"
-                    value={profileTeacher.availability || 'Not provided'}
-                />
-              </section>
-            </div>
+            {(profileTeacher.subjects || []).length > 0 && (
+              <div className="chips">
+                {profileTeacher.subjects.map(subject => (
+                    <span key={subject} style={{ background: 'rgba(112,230,207,0.08)', borderColor: 'rgba(112,230,207,0.25)', color: '#d2f9f1' }}>{subject}</span>
+                ))}
+              </div>
+            )}
 
-            {(() => {
-              const interest = validInterests.find(
-                  item => item.teacherId === (profileTeacher.userId || profileTeacher.id)
-              )
+            {profileTeacher.bio && (
+              <div className="interest-bio-box">
+                <span style={{ display: 'block', fontSize: 10, textTransform: 'uppercase', color: '#7ba1c7', fontWeight: 800, marginBottom: 4 }}>About</span>
+                {profileTeacher.bio}
+              </div>
+            )}
 
-              return interest?.status === 'INTERESTED' ? (
-                  <button
-                      type="button"
-                      className="primary full"
-                      onClick={() => onSelect(requestId, interest.teacherId)}
-                  >
-                    Accept this teacher <Check size={16} />
-                  </button>
-              ) : interest?.status === 'SELECTED' ? (
-                  <div className="request-confirmed">
-                    <CheckCircle2 size={16} />
-                    <span>This teacher has already been accepted.</span>
-                  </div>
-              ) : null
-            })()}
+            <section className="panel" style={{ padding: '14px 18px' }}>
+              <SectionHeading
+                  title="Teaching Specifications"
+                  subtitle="Verified teacher information from their profile."
+              />
+              <InfoRow
+                  label="Teaching mode"
+                  value={profileTeacher.teachingMode || 'Online / Offline'}
+              />
+              <InfoRow
+                  label="Availability"
+                  value={profileTeacher.availability || 'Evening / Weekends'}
+              />
+              <InfoRow
+                  label="Experience"
+                  value={profileTeacher.experience || 'Active university peer tutor'}
+              />
+              <InfoRow
+                  label="Location"
+                  value={profileTeacher.location || 'Southeast University'}
+              />
+            </section>
+
+            {currentInterest?.status === 'INTERESTED' ? (
+                <button
+                    type="button"
+                    className="primary full"
+                    onClick={() => onSelect(requestId, currentInterest.teacherId)}
+                    style={{ padding: 12, fontSize: 14 }}
+                >
+                  Accept this teacher <Check size={16} />
+                </button>
+            ) : currentInterest?.status === 'SELECTED' ? (
+                <div className="request-confirmed">
+                  <CheckCircle2 size={16} />
+                  <span>This teacher has already been accepted.</span>
+                </div>
+            ) : null}
           </div>
         </Modal>
     )
@@ -2812,16 +3062,17 @@ function InterestModal({ requestId, interests = [], requestOwnerId, currentUserI
         <div className="interest-list">
           {validInterests.map(item => {
             const teacher = getTeacherProfile(item.teacherId)
+            const teacherRating = Number(teacher?.rating || 0)
 
             return (
-                <article className="interest-item" key={item.id}>
+                <article className="interest-item" key={item.id} style={{ display: 'flex', gap: 14, alignItems: 'flex-start', padding: 16, borderRadius: 16, background: 'rgba(255,255,255,0.02)', border: '1px solid var(--line)' }}>
                   <div
                       className="profile-avatar"
                       style={{
                         width: 52,
                         height: 52,
                         minWidth: 52,
-                        borderRadius: '50%',
+                        borderRadius: 16,
                         overflow: 'hidden'
                       }}
                   >
@@ -2833,8 +3084,7 @@ function InterestModal({ requestId, interests = [], requestOwnerId, currentUserI
                               width: '100%',
                               height: '100%',
                               objectFit: 'cover',
-                              display: 'block',
-                              borderRadius: '50%'
+                              display: 'block'
                             }}
                         />
                     ) : (
@@ -2842,53 +3092,69 @@ function InterestModal({ requestId, interests = [], requestOwnerId, currentUserI
                     )}
                   </div>
 
-                  <div className="interest-main">
-                    <b>{item.teacherName || 'Teacher'}</b>
+                  <div className="interest-main" style={{ flex: 1 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 6 }}>
+                      <b>{item.teacherName || 'Teacher'}</b>
+                      {teacher && (
+                        <span className="teacher-rating-pill" style={{ padding: '2px 8px', fontSize: 11 }}>
+                          <Star size={12} fill="currentColor"/> {teacherRating.toFixed(1)} ({teacher.totalReviews || 0})
+                        </span>
+                      )}
+                    </div>
 
-                    <p>{item.message || 'Interested in helping you.'}</p>
+                    {teacher?.department && (
+                      <small className="muted" style={{ display: 'block', margin: '2px 0 6px', fontSize: 11 }}>
+                        {teacher.qualification || teacher.program || 'Peer Tutor'} · {teacher.department}
+                      </small>
+                    )}
 
-                    <StatusPill value={item.status} />
+                    <p style={{ margin: '6px 0 10px', fontSize: 13, color: '#c3d5eb', fontStyle: 'italic' }}>
+                      "{item.message || 'Interested in helping you with this course.'}"
+                    </p>
 
-                    <div
-                        className="interest-actions"
-                        style={{
-                          display: 'flex',
-                          gap: 8,
-                          marginTop: 10,
-                          flexWrap: 'wrap'
-                        }}
-                    >
-                      <button
-                          type="button"
-                          className="secondary small"
-                          onClick={() => {
-                            if (teacher) {
-                              setProfileTeacher(teacher)
-                            }
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                      <StatusPill value={item.status} />
+
+                      <div
+                          className="interest-actions"
+                          style={{
+                            display: 'flex',
+                            gap: 8,
+                            marginLeft: 'auto'
                           }}
-                          disabled={!teacher}
                       >
-                        <Eye size={15} />
-                        View profile
-                      </button>
+                        <button
+                            type="button"
+                            className="secondary small"
+                            onClick={() => {
+                              if (teacher) {
+                                setProfileTeacher(teacher)
+                              }
+                            }}
+                            disabled={!teacher}
+                        >
+                          <Eye size={14} />
+                          View profile
+                        </button>
 
-                      {item.status === 'INTERESTED' && (
-                          <button
-                              type="button"
-                              className="primary small"
-                              onClick={() => onSelect(requestId, item.teacherId)}
-                          >
-                            <Check size={15} />
-                            Accept teacher
-                          </button>
-                      )}
+                        {item.status === 'INTERESTED' && (
+                            <button
+                                type="button"
+                                className="primary small"
+                                onClick={() => onSelect(requestId, item.teacherId)}
+                            >
+                              <Check size={14} />
+                              Accept teacher
+                            </button>
+                        )}
 
-                      {item.status === 'SELECTED' && (
-                          <span className="request-confirmed">
-                      <CheckCircle2 size={15} />
-                      Accepted
-                    </span>
-                      )}
+                        {item.status === 'SELECTED' && (
+                            <span className="request-confirmed" style={{ fontSize: 11, padding: '4px 10px' }}>
+                              <CheckCircle2 size={13} />
+                              Accepted
+                            </span>
+                        )}
+                      </div>
                     </div>
                   </div>
                 </article>
@@ -2899,7 +3165,7 @@ function InterestModal({ requestId, interests = [], requestOwnerId, currentUserI
               <EmptyState
                   icon={Users}
                   title="No interests yet"
-                  text="Teachers who respond will appear here."
+                  text="Interested teachers will appear here once they express interest in your request."
               />
           )}
         </div>
@@ -3067,54 +3333,64 @@ function ReviewModal({ classItem, teacher, auth, onClose, onDone }) {
 }
 
 function TeacherCard({ teacher, rank, onOpen }) {
+  const rating = Number(teacher.rating || 0)
+  const rankClass = rank === 1 ? 'teacher-rank-1' : rank === 2 ? 'teacher-rank-2' : rank === 3 ? 'teacher-rank-3' : 'teacher-rank-other'
+
   return (
       <article
-          className="teacher-card"
+          className="teacher-card-cool"
           onClick={onOpen}
           style={{ cursor: onOpen ? 'pointer' : 'default' }}
       >
-        <div className="teacher-top">
-          <div className="profile-avatar">
-            {teacher.profileImage ? (
-                <img src={fileUrl(teacher.profileImage)} alt="" />
-            ) : (
-                initials(teacher.fullName)
-            )}
+        <div>
+          <div className="teacher-top" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+            <div className="profile-avatar" style={{ width: 48, height: 48, borderRadius: 14 }}>
+              {teacher.profileImage ? (
+                  <img src={fileUrl(teacher.profileImage)} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: 14 }} />
+              ) : (
+                  initials(teacher.fullName)
+              )}
+            </div>
+            <div className={`teacher-rank-tag ${rankClass}`}>
+              {rank === 1 ? '★ #1 Top Rated' : rank ? `#${rank} Ranked` : 'Teacher'}
+            </div>
           </div>
-          <div className="rank">{rank ? `#${rank}` : 'Teacher'}</div>
+
+          <h3 style={{ fontSize: 16, fontWeight: 750, margin: '4px 0 2px' }}>{teacher.fullName || 'Teacher'}</h3>
+
+          <p className="muted" style={{ fontSize: 12, margin: '0 0 10px' }}>
+            {teacher.qualification ||
+                teacher.program ||
+                teacher.department ||
+                'SEU Peer Tutor'} · {teacher.department || 'SEU'}
+          </p>
+
+          <div className="chips small-chips" style={{ marginBottom: 14 }}>
+            {(teacher.subjects || []).slice(0, 3).map(x => (
+                <span key={x}>{x}</span>
+            ))}
+          </div>
         </div>
 
-        <h3>{teacher.fullName || 'Teacher'}</h3>
-
-        <p>
-          {teacher.qualification ||
-              teacher.program ||
-              teacher.department ||
-              'SEU teacher'}
-        </p>
-
-        <div className="chips small-chips">
-          {(teacher.subjects || []).slice(0, 3).map(x => (
-              <span key={x}>{x}</span>
-          ))}
-        </div>
-
-        <div className="teacher-bottom">
-        <span>
-          <Star size={14} fill="currentColor"/>
-          {Number(teacher.rating || 0).toFixed(1)}
-        </span>
-          <span>{teacher.totalReviews || 0} reviews</span>
+        <div className="teacher-bottom" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', paddingTop: 12, borderTop: '1px solid var(--line)' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            <span className="teacher-rating-pill">
+              <Star size={13} fill="currentColor"/> {rating.toFixed(1)}
+            </span>
+            <small className="muted" style={{ fontSize: 11 }}>({teacher.totalReviews || 0} reviews)</small>
+          </div>
 
           {onOpen && (
               <button
                   className="secondary small"
+                  type="button"
                   onClick={e => {
                     e.stopPropagation()
                     onOpen()
                   }}
+                  style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}
               >
-                <Eye size={15}/>
+                <Eye size={14}/>
                 View Profile
               </button>
           )}
@@ -3129,7 +3405,7 @@ function AdminQuick({ title, value, action, onClick, icon: Icon }) { return <sec
 
 function PageHero({ title, subtitle, action }) { return <section className="page-hero"><div><span className="eyebrow">SEUTOPPERS</span><h1>{title}</h1><p>{subtitle}</p></div>{action && <button className="primary" onClick={action.onClick}>{action.label} <ArrowRight size={16}/></button>}</section> }
 function SectionHeading({ title, subtitle, action }) { return <div className="section-heading"><div><h2>{title}</h2>{subtitle && <p>{subtitle}</p>}</div>{action}</div> }
-function StatCard({ label, value, icon: Icon }) { return <article className="stat-card"><div className="stat-icon"><Icon size={18}/></div><div><span>{label}</span><strong>{value}</strong></div></article> }
+function StatCard({ label, value, icon: Icon }) { return <article className="stat-card-cool"><div className="stat-icon-wrap"><Icon size={20}/></div><div><span>{label}</span><strong>{value}</strong></div></article> }
 function InfoRow({ label, value }) { return <div className="info-row"><span>{label}</span><b>{value}</b></div> }
 function StatusPill({ value }) { const v = String(value || '').replaceAll('_', ' '); return <span className={`status status-${String(value || '').toLowerCase()}`}>{v}</span> }
 function Stars({ value }) { return <div className="stars">{[1,2,3,4,5].map(x => <Star key={x} size={14} fill={x <= value ? 'currentColor' : 'none'}/>)}</div> }
