@@ -706,6 +706,186 @@ function Reset({ go, notify, busy }) {
   </AuthFrame>
 }
 
+function BannedAccountScreen({ auth, profile, logout }) {
+  const banDate = auth?.bannedUntil || profile?.bannedUntil
+  let formattedBanDate = null
+  if (banDate) {
+    try {
+      const d = new Date(banDate)
+      if (!isNaN(d.getTime())) {
+        formattedBanDate = d.toLocaleDateString(undefined, {
+          year: 'numeric',
+          month: 'short',
+          day: 'numeric'
+        })
+      }
+    } catch {
+      // fallback
+    }
+  }
+
+  return (
+    <div className="banned-screen-container" style={{
+      minHeight: '100vh',
+      display: 'flex',
+      flexDirection: 'column',
+      background: 'transparent',
+      color: 'var(--text, #eaf3ff)',
+      position: 'relative',
+      zIndex: 1
+    }}>
+      <header className="appbar" style={{
+        position: 'sticky',
+        top: 0,
+        zIndex: 10,
+        padding: '0.85rem 1.5rem',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        borderBottom: '1px solid var(--line, rgba(154, 185, 220, 0.14))',
+        background: 'rgba(10, 23, 39, 0.85)',
+        backdropFilter: 'blur(16px)'
+      }}>
+        <Brand onClick={() => {}} />
+        <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
+          <span className="role-pill" style={{
+            background: 'rgba(239, 68, 68, 0.15)',
+            color: '#f87171',
+            border: '1px solid rgba(239, 68, 68, 0.35)',
+            fontWeight: 700,
+            fontSize: '0.78rem',
+            letterSpacing: '0.04em'
+          }}>
+            TEMPORARILY BANNED
+          </span>
+          <button
+            className="icon-btn"
+            onClick={logout}
+            title="Log out"
+            style={{
+              background: 'rgba(239, 68, 68, 0.12)',
+              border: '1px solid rgba(239, 68, 68, 0.3)',
+              color: '#f87171'
+            }}
+          >
+            <LogOut size={17} />
+          </button>
+        </div>
+      </header>
+
+      <main style={{
+        flex: 1,
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        padding: '2.5rem 1.25rem'
+      }}>
+        <div style={{
+          maxWidth: '520px',
+          width: '100%',
+          background: 'var(--panel, #0a1727)',
+          border: '1px solid rgba(239, 68, 68, 0.35)',
+          borderRadius: '24px',
+          padding: '2.75rem 2rem',
+          textAlign: 'center',
+          boxShadow: '0 24px 80px rgba(0, 0, 0, 0.6), 0 0 50px rgba(239, 68, 68, 0.12)',
+          backdropFilter: 'blur(20px)'
+        }}>
+          <div style={{
+            width: '72px',
+            height: '72px',
+            borderRadius: '50%',
+            background: 'rgba(239, 68, 68, 0.12)',
+            border: '1px solid rgba(239, 68, 68, 0.4)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            margin: '0 auto 1.5rem',
+            color: '#f87171',
+            boxShadow: '0 0 24px rgba(239, 68, 68, 0.25)'
+          }}>
+            <AlertCircle size={40} />
+          </div>
+
+          <h2 style={{
+            fontSize: '1.5rem',
+            fontWeight: 700,
+            color: '#f87171',
+            margin: '0 0 0.75rem',
+            letterSpacing: '-0.02em'
+          }}>
+            Your account is temporarily banned
+          </h2>
+
+          <p style={{
+            color: 'var(--muted, #8da3bd)',
+            fontSize: '0.95rem',
+            lineHeight: 1.6,
+            margin: '0 0 1.5rem'
+          }}>
+            Your account has been temporarily restricted by an administrator. While your account is suspended, all platform features and services are completely locked.
+          </p>
+
+          {formattedBanDate ? (
+            <div style={{
+              background: 'rgba(239, 68, 68, 0.08)',
+              border: '1px solid rgba(239, 68, 68, 0.22)',
+              borderRadius: '14px',
+              padding: '0.85rem 1.25rem',
+              marginBottom: '2rem',
+              fontSize: '0.92rem',
+              color: '#e2e8f0',
+              display: 'inline-block'
+            }}>
+              Access restricted until: <strong style={{ color: '#f87171' }}>{formattedBanDate}</strong>
+            </div>
+          ) : (
+            <div style={{
+              background: 'rgba(239, 68, 68, 0.08)',
+              border: '1px solid rgba(239, 68, 68, 0.22)',
+              borderRadius: '14px',
+              padding: '0.85rem 1.25rem',
+              marginBottom: '2rem',
+              fontSize: '0.92rem',
+              color: '#e2e8f0',
+              display: 'inline-block'
+            }}>
+              Status: <strong style={{ color: '#f87171' }}>Temporarily Suspended</strong>
+            </div>
+          )}
+
+          <div>
+            <button
+              type="button"
+              onClick={logout}
+              style={{
+                background: 'linear-gradient(135deg, #ef4444, #dc2626)',
+                color: '#ffffff',
+                border: 'none',
+                borderRadius: '12px',
+                padding: '0.85rem 2.25rem',
+                fontSize: '0.95rem',
+                fontWeight: 600,
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '8px',
+                cursor: 'pointer',
+                boxShadow: '0 8px 24px -4px rgba(239, 68, 68, 0.45)',
+                transition: 'transform 0.15s ease'
+              }}
+              onMouseEnter={e => e.currentTarget.style.transform = 'translateY(-1px)'}
+              onMouseLeave={e => e.currentTarget.style.transform = 'translateY(0)'}
+            >
+              <LogOut size={17} />
+              <span>Log out</span>
+            </button>
+          </div>
+        </div>
+      </main>
+    </div>
+  )
+}
+
 function AppShell({ auth, page, go, logout, notify, busy, notifications }) {
   const [open, setOpen] = useState(false), [notiOpen, setNotiOpen] = useState(false)
   const [profile, setProfile] = useState(null)
@@ -746,7 +926,7 @@ function AppShell({ auth, page, go, logout, notify, busy, notifications }) {
   }
 
   useEffect(() => {
-    if (teacher) {
+    if (teacher && !isBanned) {
       loadTeacherConversations()
       const interval = setInterval(loadTeacherConversations, 5000)
       const handleLiveChat = (e) => {
@@ -760,7 +940,7 @@ function AppShell({ auth, page, go, logout, notify, busy, notifications }) {
         window.removeEventListener('seutoppers-live-chat', handleLiveChat)
       }
     }
-  }, [teacher, auth?.userId])
+  }, [teacher, auth?.userId, isBanned])
 
   const links = auth.role === 'ADMIN' ? [
     ['dashboard', 'Overview', LayoutDashboard], ['admin-teachers', 'Teachers', Users], ['admin-students', 'Students', UserRound], ['admin-applications', 'Applications', ClipboardList], ['admin-payments', 'Payments', WalletCards], ['admin-classes', 'Classes', CalendarDays]
@@ -803,6 +983,10 @@ function AppShell({ auth, page, go, logout, notify, busy, notifications }) {
     ['payments', 'Payments', CreditCard],
     ['profile', 'Profile', UserRound]
   ]
+
+  if (isBanned) {
+    return <BannedAccountScreen auth={auth} profile={profile} logout={logout} />
+  }
 
   return <div className="app-shell">
     {open && <div className="sidebar-backdrop" onClick={() => setOpen(false)} />}
