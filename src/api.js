@@ -58,6 +58,32 @@ export function parseJwt(token) {
     }
 }
 
+export const INACTIVITY_TIMEOUT_MS = 20 * 60 * 1000 // 20 minutes continuous inactivity
+export const LAST_ACTIVITY_KEY = 'seutoppers_last_activity'
+
+export function recordActivity() {
+    try {
+        localStorage.setItem(LAST_ACTIVITY_KEY, String(Date.now()))
+    } catch {}
+}
+
+export function getLastActivity() {
+    try {
+        const val = localStorage.getItem(LAST_ACTIVITY_KEY)
+        return val ? Number(val) : 0
+    } catch {
+        return 0
+    }
+}
+
+export function isInactive() {
+    const token = localStorage.getItem('seutoppers_token')
+    if (!token) return false
+    const last = getLastActivity()
+    if (!last) return false
+    return Date.now() - last >= INACTIVITY_TIMEOUT_MS
+}
+
 export function isTokenExpired(token) {
     if (!token) return true
     const payload = parseJwt(token)
@@ -81,13 +107,27 @@ async function request(path, options = {}) {
     const token = localStorage.getItem('seutoppers_token')
 
     if (token) {
+        if (isInactive()) {
+            localStorage.removeItem('seutoppers_auth')
+            localStorage.removeItem('seutoppers_token')
+            localStorage.removeItem(LAST_ACTIVITY_KEY)
+            window.dispatchEvent(new CustomEvent('seutoppers-auth-expired', {
+                detail: { message: 'You were logged out due to inactivity.' }
+            }))
+            throw new Error('You were logged out due to inactivity.')
+        }
+
         if (isTokenExpired(token)) {
             localStorage.removeItem('seutoppers_auth')
             localStorage.removeItem('seutoppers_token')
-            window.dispatchEvent(new CustomEvent('seutoppers-auth-expired'))
-            throw new Error('Session expired. Please log in again.')
+            localStorage.removeItem(LAST_ACTIVITY_KEY)
+            window.dispatchEvent(new CustomEvent('seutoppers-auth-expired', {
+                detail: { message: 'You were logged out.' }
+            }))
+            throw new Error('You were logged out.')
         }
         headers.set('Authorization', `Bearer ${token}`)
+        recordActivity()
     }
 
     if (options.body && !(options.body instanceof FormData)) {
@@ -108,7 +148,10 @@ async function request(path, options = {}) {
         if (response.status === 401 && !path.includes('/auth/login')) {
             localStorage.removeItem('seutoppers_auth')
             localStorage.removeItem('seutoppers_token')
-            window.dispatchEvent(new CustomEvent('seutoppers-auth-expired'))
+            localStorage.removeItem(LAST_ACTIVITY_KEY)
+            window.dispatchEvent(new CustomEvent('seutoppers-auth-expired', {
+                detail: { message: 'You were logged out.' }
+            }))
         }
         const message =
             typeof data === 'object' && data

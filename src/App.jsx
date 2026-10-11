@@ -7,7 +7,7 @@ import {
   X, Upload, Sparkles, Ban, CheckCircle2, AlertCircle, Eye, Plus, RefreshCw, LockKeyhole, Send,
   Award, HelpCircle, CreditCard, Lock, Minus
 } from 'lucide-react'
-import { api, fileUrl, getChatWebSocketUrl, parseJwt, isTokenExpired } from './api'
+import { api, fileUrl, getChatWebSocketUrl, parseJwt, isTokenExpired, recordActivity, isInactive, LAST_ACTIVITY_KEY } from './api'
 
 
 const requestInterestUiStyle = `
@@ -76,12 +76,30 @@ function storeReview(review) {
   }
 }
 
+const INACTIVITY_NOTICE_KEY = 'seutoppers_inactivity_notice'
+
 function readAuth() {
   try {
     const value = JSON.parse(localStorage.getItem('seutoppers_auth') || 'null')
 
-    if (!value?.token || !value?.userId || !value?.role || isTokenExpired(value.token)) {
+    if (!value?.token || !value?.userId || !value?.role) {
       clearAuth()
+      return null
+    }
+
+    if (isInactive()) {
+      clearAuth()
+      try {
+        sessionStorage.setItem(INACTIVITY_NOTICE_KEY, 'You were logged out due to inactivity.')
+      } catch {}
+      return null
+    }
+
+    if (isTokenExpired(value.token)) {
+      clearAuth()
+      try {
+        sessionStorage.setItem(INACTIVITY_NOTICE_KEY, 'You were logged out.')
+      } catch {}
       return null
     }
 
@@ -99,11 +117,13 @@ function saveAuth(value) {
 
   localStorage.setItem('seutoppers_auth', JSON.stringify(value))
   localStorage.setItem('seutoppers_token', value.token)
+  recordActivity()
 }
 
 function clearAuth() {
   localStorage.removeItem('seutoppers_auth')
   localStorage.removeItem('seutoppers_token')
+  localStorage.removeItem(LAST_ACTIVITY_KEY)
 }
 
 function useHashPage(defaultPage) {
@@ -283,6 +303,19 @@ export default function App() {
   const [loading, setLoading] = useState(false)
   const notifications = useNotifications(auth)
 
+  const notify = message => setToast(message)
+
+  // Show stored inactivity notice when page loads or user returns
+  useEffect(() => {
+    try {
+      const notice = sessionStorage.getItem(INACTIVITY_NOTICE_KEY)
+      if (notice) {
+        sessionStorage.removeItem(INACTIVITY_NOTICE_KEY)
+        notify(notice)
+      }
+    } catch {}
+  }, [])
+
   useEffect(() => {
     document.title = loading ? `Loading • ${APP}` : `${APP}`
     if (!toast) return
@@ -296,60 +329,94 @@ export default function App() {
     return () => document.removeEventListener('visibilitychange', onVisibility)
   }, [page])
 
-  // Auto-logout immediately when token expires (20 minutes duration)
+  // Continuous inactivity tracking (expires only after 20 minutes of continuous inactivity)
   useEffect(() => {
     if (!auth?.token) return
 
-    const checkTokenExpiry = () => {
+    const handleInactivityLogout = () => {
+      clearAuth()
+      setAuth(null)
+      go('login')
+      notify('You were logged out due to inactivity.')
+    }
+
+    const checkInactivity = () => {
+      if (isInactive()) {
+        handleInactivityLogout()
+        return true
+      }
       if (isTokenExpired(auth.token)) {
         clearAuth()
         setAuth(null)
         go('login')
-        notify('Your session expired after 20 minutes. Please log in again.')
+        notify('You were logged out.')
         return true
       }
       return false
     }
 
-    if (checkTokenExpiry()) return
+    if (checkInactivity()) return
 
-    const payload = parseJwt(auth.token)
-    let timer = null
-    if (payload?.exp) {
-      const msUntilExpiry = (payload.exp * 1000) - Date.now()
-      if (msUntilExpiry > 0) {
-        timer = setTimeout(() => {
-          checkTokenExpiry()
-        }, msUntilExpiry)
+    // Record activity on mount
+    recordActivity()
+
+    // Throttle user interaction to update activity at most once every 2 seconds
+    let lastRecorded = Date.now()
+    const handleUserInteraction = () => {
+      const now = Date.now()
+      if (now - lastRecorded > 2000) {
+        lastRecorded = now
+        recordActivity()
       }
     }
 
-    const interval = setInterval(checkTokenExpiry, 5000)
+    const interactionEvents = ['mousedown', 'keydown', 'scroll', 'touchstart', 'mousemove']
+    interactionEvents.forEach(evt => {
+      window.addEventListener(evt, handleUserInteraction, { passive: true })
+    })
 
-    const onVisChange = () => {
+    // Check periodically every 5 seconds
+    const interval = setInterval(checkInactivity, 5000)
+
+    // Check when user returns to this page / tab
+    const onFocusOrVisible = () => {
       if (!document.hidden) {
-        checkTokenExpiry()
+        if (!checkInactivity()) {
+          handleUserInteraction()
+        }
       }
     }
-    document.addEventListener('visibilitychange', onVisChange)
+    document.addEventListener('visibilitychange', onFocusOrVisible)
+    window.addEventListener('focus', onFocusOrVisible)
 
-    const onAuthExpired = () => {
+    // Sync logout across tabs if another tab cleared auth/token
+    const onStorageChange = (e) => {
+      if (e.key === 'seutoppers_token' && !e.newValue) {
+        setAuth(null)
+        go('login')
+      }
+    }
+    window.addEventListener('storage', onStorageChange)
+
+    const onAuthExpired = (e) => {
       clearAuth()
       setAuth(null)
       go('login')
-      notify('Session expired. Please log in again.')
+      notify(e?.detail?.message || 'You were logged out due to inactivity.')
     }
     window.addEventListener('seutoppers-auth-expired', onAuthExpired)
 
     return () => {
-      if (timer) clearTimeout(timer)
       clearInterval(interval)
-      document.removeEventListener('visibilitychange', onVisChange)
+      interactionEvents.forEach(evt => {
+        window.removeEventListener(evt, handleUserInteraction)
+      })
+      document.removeEventListener('visibilitychange', onFocusOrVisible)
+      window.removeEventListener('focus', onFocusOrVisible)
+      window.removeEventListener('storage', onStorageChange)
       window.removeEventListener('seutoppers-auth-expired', onAuthExpired)
     }
   }, [auth?.token])
-
-  const notify = message => setToast(message)
   const login = value => {
     saveAuth(value)
     setAuth(value)
@@ -414,6 +481,12 @@ function AuthFrame({ kicker, title, children, go }) {
           <i style={{ width: '80%' }}/>
         </div>
         <small>Unlock requests and teacher applications</small>
+      </div>
+
+      {/* Subtle Footer with Live Dot */}
+      <div className="showcase-footer">
+        <span className="showcase-footer-dot" aria-hidden="true" />
+        <span>Made with care by <span className="showcase-footer-author">Momin</span> &copy; 2026</span>
       </div>
 
       <div className="showcase-orb orb-left"/>
@@ -1030,6 +1103,8 @@ function AppShell({ auth, page, go, logout, notify, busy, notifications }) {
                     openFloatingChat({
                       classId: conv.classId,
                       classStatus: conv.status,
+                      myRole: 'TEACHER',
+                      studentId: conv.studentId,
                       otherUser: {
                         id: conv.studentId,
                         name: conv.studentName,
@@ -1930,6 +2005,9 @@ function ServiceTakenPage({ auth, notify, openFloatingChat }) {
                   openFloatingChat?.({
                     classId: c.id,
                     classStatus: c.status,
+                    myRole: 'STUDENT',
+                    studentId: c.studentId,
+                    teacherId: c.teacherId,
                     otherUser: {
                       id: c.teacherId,
                       name: map[c.teacherId]?.fullName || 'Teacher',
@@ -2020,6 +2098,48 @@ function PaymentsPage({ notify }) {
 
   const classMap = useMemo(() => Object.fromEntries((classes.data || []).map(x => [x.id, x])), [classes.data])
   const teacherMap = useMemo(() => Object.fromEntries((teachers.data || []).map(x => [x.userId || x.id, x])), [teachers.data])
+
+  useEffect(() => {
+    let status = null
+    let tranId = null
+    let amount = null
+    let message = null
+
+    const urlParams = new URLSearchParams(window.location.search)
+    if (urlParams.has('payment_status')) {
+      status = urlParams.get('payment_status')
+      tranId = urlParams.get('tran_id')
+      amount = urlParams.get('amount')
+      message = urlParams.get('message')
+    } else if (window.location.hash.includes('?')) {
+      const hashQuery = window.location.hash.substring(window.location.hash.indexOf('?') + 1)
+      const hashParams = new URLSearchParams(hashQuery)
+      if (hashParams.has('payment_status')) {
+        status = hashParams.get('payment_status')
+        tranId = hashParams.get('tran_id')
+        amount = hashParams.get('amount')
+        message = hashParams.get('message')
+      }
+    }
+
+    if (status) {
+      if (status === 'success') {
+        notify(`Payment of ৳${amount || 100} confirmed successfully via SSLCOMMERZ! Your class has been confirmed.`)
+      } else if (status === 'failed') {
+        notify(`Payment failed: ${message || 'Transaction was declined by gateway.'}`)
+      } else if (status === 'cancelled') {
+        notify('Payment was cancelled.')
+      }
+
+      // Clean query parameters from URL without reloading
+      const cleanPath = window.location.pathname
+      const cleanHash = window.location.hash.split('?')[0] || '#payments'
+      window.history.replaceState(null, '', cleanPath + cleanHash)
+
+      payments.reload()
+      classes.reload()
+    }
+  }, [])
 
   const getNormalizedStatus = (status) => {
     if (status === 'CANCELLED') return 'CANCELLED'
@@ -2150,50 +2270,43 @@ function PaymentsPage({ notify }) {
 }
 
 function PaymentGatewayModal({ payment, classItem, teacher, onClose, onSuccess }) {
-  const minAmount = Number(payment.amount || 100)
-  const [amount, setAmount] = useState(minAmount)
-  const [phone, setPhone] = useState('01812345678')
-  const [trxId, setTrxId] = useState(() => 'BK' + Math.random().toString(36).substring(2, 9).toUpperCase())
+  const payableAmount = Number(payment?.amount || classItem?.amount || 100)
   const [error, setError] = useState('')
   const [submitting, setSubmitting] = useState(false)
+  const [redirecting, setRedirecting] = useState(false)
 
-  const handlePay = async (e) => {
+  const handlePaySslCommerz = async (e) => {
     e.preventDefault()
     setError('')
-    const payVal = Number(amount)
-    if (isNaN(payVal) || payVal < minAmount) {
-      setError(`Payment amount must be equal to or greater than ৳${minAmount}.`)
-      return
-    }
-    if (!phone.trim()) {
-      setError('Please provide a valid bKash number.')
-      return
-    }
-
     setSubmitting(true)
+
     try {
-      await api.payPayment(payment.id, {
-        amount: payVal,
-        transactionId: trxId.trim(),
-        gateway: 'BKASH',
-        senderNumber: phone.trim()
-      })
-      onSuccess(`Payment of ৳${payVal} completed successfully! Your class is confirmed and teacher is notified.`)
+      // Initiate real SSLCOMMERZ Sandbox checkout via backend
+      const targetId = payment?.id || classItem?.id
+      const res = await api.initiatePayment(targetId)
+
+      if (res && res.checkoutUrl) {
+        setRedirecting(true)
+        // Redirect browser to SSLCOMMERZ Gateway
+        window.location.href = res.checkoutUrl
+      } else {
+        throw new Error('Could not obtain checkout URL from SSLCOMMERZ gateway.')
+      }
     } catch (err) {
-      setError(err.message)
-    } finally {
+      setError(err.message || 'Payment initiation failed. Please try again.')
       setSubmitting(false)
+      setRedirecting(false)
     }
   }
 
   return (
-    <Modal title="bKash Payment Gateway" onClose={onClose}>
-      <form className="form" onSubmit={handlePay}>
-        <div className="bkash-banner">
-          <div className="bkash-badge">bKash</div>
+    <Modal title="Secure Payment — SSLCOMMERZ" onClose={!submitting ? onClose : undefined}>
+      <form className="form" onSubmit={handlePaySslCommerz}>
+        <div className="sslcommerz-banner">
+          <div className="sslcommerz-badge">SSLCOMMERZ</div>
           <div>
-            <strong>Merchant Payment Checkout</strong>
-            <small>Automated escrow verification</small>
+            <strong>Automated Gateway Checkout</strong>
+            <small>Sandbox Mode • Secure Encrypted Transaction</small>
           </div>
         </div>
 
@@ -2207,48 +2320,54 @@ function PaymentGatewayModal({ payment, classItem, teacher, onClose, onSuccess }
             <strong>{teacher?.fullName || 'SEU Teacher'}</strong>
           </div>
           <div>
-            <span>Required Minimum</span>
-            <strong style={{ color: '#70e6cf' }}>৳{minAmount}</strong>
+            <span>Total Payable</span>
+            <strong style={{ color: '#54e4cb' }}>৳{payableAmount}</strong>
           </div>
         </div>
 
-        <Field
-          label={`Pay Amount (BDT) — Minimum ৳${minAmount} required`}
-          type="number"
-          min={minAmount}
-          step="1"
-          value={amount}
-          onChange={e => setAmount(e.target.value)}
-          required
-        />
-
-        <Field
-          label="bKash Account Number"
-          type="text"
-          placeholder="01XXXXXXXXX"
-          value={phone}
-          onChange={e => setPhone(e.target.value)}
-          required
-        />
-
-        <div className="field">
-          <span>Transaction ID (Simulation)</span>
-          <div className="password-wrap">
-            <input
-              type="text"
-              value={trxId}
-              onChange={e => setTrxId(e.target.value)}
-              required
-            />
-            <button
-              type="button"
-              style={{ width: 'auto', padding: '0 10px', fontSize: '11px', color: '#70e6cf' }}
-              onClick={() => setTrxId('BK' + Math.random().toString(36).substring(2, 9).toUpperCase())}
-            >
-              New TrxID
-            </button>
+        <div style={{ marginBottom: '16px' }}>
+          <span style={{ display: 'block', fontSize: '11px', color: '#94a3b8', marginBottom: '8px', fontWeight: 600, textTransform: 'uppercase' }}>
+            Supported Payment Methods
+          </span>
+          <div className="sslcommerz-methods">
+            <span className="sslcommerz-method-chip">
+              <CreditCard size={13} color="#54e4cb" /> Cards (Visa, MasterCard, Amex)
+            </span>
+            <span className="sslcommerz-method-chip">
+              <span style={{ color: '#e2136e', fontWeight: 800 }}>bKash</span>
+            </span>
+            <span className="sslcommerz-method-chip">
+              <span style={{ color: '#f7941d', fontWeight: 800 }}>Nagad</span>
+            </span>
+            <span className="sslcommerz-method-chip">
+              <span style={{ color: '#8c348f', fontWeight: 800 }}>Rocket</span>
+            </span>
+            <span className="sslcommerz-method-chip">
+              Internet Banking
+            </span>
           </div>
+          <p style={{ margin: 0, fontSize: '12px', color: '#94a3b8', lineHeight: 1.5 }}>
+            You will be redirected to the official SSLCOMMERZ Sandbox payment gateway to complete your payment securely.
+          </p>
         </div>
+
+        {redirecting && (
+          <div style={{
+            padding: '12px',
+            borderRadius: '12px',
+            background: 'rgba(84, 228, 203, 0.1)',
+            border: '1px solid rgba(84, 228, 203, 0.3)',
+            color: '#54e4cb',
+            fontSize: '13px',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '10px',
+            marginBottom: '16px'
+          }}>
+            <Spinner />
+            <span>Redirecting to SSLCOMMERZ gateway...</span>
+          </div>
+        )}
 
         <ErrorBox error={error} />
 
@@ -2256,8 +2375,12 @@ function PaymentGatewayModal({ payment, classItem, teacher, onClose, onSuccess }
           <button type="button" className="secondary" onClick={onClose} disabled={submitting}>
             Cancel
           </button>
-          <button type="submit" className="primary btn-bkash-confirm" disabled={submitting}>
-            {submitting ? <Spinner /> : <><Check size={16} /> Confirm & Pay ৳{amount}</>}
+          <button type="submit" className="primary btn-ssl-pay" disabled={submitting}>
+            {submitting ? (
+              <><Spinner /> Connecting to Gateway...</>
+            ) : (
+              <><CreditCard size={16} /> Pay ৳{payableAmount} with SSLCOMMERZ</>
+            )}
           </button>
         </div>
       </form>
@@ -2336,10 +2459,32 @@ function FloatingMessengerWindow({ activeChat, isMinimized, onToggleMinimize, on
   const [loading, setLoading] = useState(true)
   const messagesEndRef = React.useRef(null)
 
-  const isTeacher = auth?.role === 'TEACHER'
+  // Determine role in THIS specific class conversation:
+  // Even if a user has TEACHER role, when taking a service (Service taken), they are the STUDENT!
+  const isTeacherInChat = (() => {
+    if (activeChat?.myRole) {
+      return activeChat.myRole === 'TEACHER'
+    }
+    if (activeChat?.otherUser?.role === 'Teacher') {
+      return false
+    }
+    if (activeChat?.otherUser?.role === 'Student') {
+      return true
+    }
+    if (activeChat?.studentId && auth?.userId && activeChat.studentId === auth.userId) {
+      return false
+    }
+    if (activeChat?.teacherId && auth?.userId && activeChat.teacherId === auth.userId) {
+      return true
+    }
+    return auth?.role === 'TEACHER'
+  })()
+
   const isClassCompleted = activeChat?.classStatus === 'COMPLETED'
-  const studentHasMessaged = messages.some(m => m.senderRole === 'STUDENT' || (m.senderId !== auth?.userId && isTeacher))
-  const canSend = !isClassCompleted && (!isTeacher || studentHasMessaged)
+  const studentHasMessaged = messages.some(
+    m => m.senderRole === 'STUDENT' || (m.senderId !== auth?.userId && isTeacherInChat)
+  )
+  const canSend = !isClassCompleted && (!isTeacherInChat || studentHasMessaged)
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -2533,7 +2678,7 @@ function FloatingMessengerWindow({ activeChat, isMinimized, onToggleMinimize, on
             </div>
             <strong>{otherName}</strong>
             <p>
-              {isTeacher
+              {isTeacherInChat
                 ? "Waiting for student to initiate the conversation."
                 : "Send a message below to start chatting."}
             </p>
@@ -2570,7 +2715,7 @@ function FloatingMessengerWindow({ activeChat, isMinimized, onToggleMinimize, on
             <Lock size={13} />
             <span>Class completed. Messages cannot be sent.</span>
           </div>
-        ) : isTeacher && !studentHasMessaged ? (
+        ) : isTeacherInChat && !studentHasMessaged ? (
           <div className="chat-notice-box info">
             <AlertCircle size={13} />
             <span>Waiting for student to initiate chat. You can reply once they message.</span>
@@ -2584,7 +2729,7 @@ function FloatingMessengerWindow({ activeChat, isMinimized, onToggleMinimize, on
             placeholder={
               isClassCompleted
                 ? "Class completed. Messaging is closed."
-                : isTeacher && !studentHasMessaged
+                : isTeacherInChat && !studentHasMessaged
                 ? "Waiting for student to message..."
                 : `Message ${otherName}...`
             }
@@ -4262,6 +4407,9 @@ function TeacherClassCard({ item, notify, reload, openFloatingChat }) {
             openFloatingChat?.({
               classId: item.id,
               classStatus: item.status,
+              myRole: 'TEACHER',
+              studentId: item.studentId,
+              teacherId: item.teacherId,
               otherUser: {
                 id: item.studentId,
                 name: studentName,
