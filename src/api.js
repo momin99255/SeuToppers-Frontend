@@ -35,7 +35,34 @@ function invalidateForMutation(path) {
         clearApiCache('/notifications')
     } else if (path.includes('/admin')) {
         clearApiCache('/admin')
+        clearApiCache('/teacher')
     }
+}
+
+export function parseJwt(token) {
+    try {
+        if (!token) return null
+        const parts = token.split('.')
+        if (parts.length < 2) return null
+        const base64Url = parts[1]
+        const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/')
+        const jsonPayload = decodeURIComponent(
+            atob(base64)
+                .split('')
+                .map(c => '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2))
+                .join('')
+        )
+        return JSON.parse(jsonPayload)
+    } catch {
+        return null
+    }
+}
+
+export function isTokenExpired(token) {
+    if (!token) return true
+    const payload = parseJwt(token)
+    if (!payload || !payload.exp) return false
+    return Date.now() >= payload.exp * 1000
 }
 
 async function request(path, options = {}) {
@@ -54,6 +81,12 @@ async function request(path, options = {}) {
     const token = localStorage.getItem('seutoppers_token')
 
     if (token) {
+        if (isTokenExpired(token)) {
+            localStorage.removeItem('seutoppers_auth')
+            localStorage.removeItem('seutoppers_token')
+            window.dispatchEvent(new CustomEvent('seutoppers-auth-expired'))
+            throw new Error('Session expired. Please log in again.')
+        }
         headers.set('Authorization', `Bearer ${token}`)
     }
 
@@ -72,12 +105,21 @@ async function request(path, options = {}) {
         : await response.text()
 
     if (!response.ok) {
+        if (response.status === 401 && !path.includes('/auth/login')) {
+            localStorage.removeItem('seutoppers_auth')
+            localStorage.removeItem('seutoppers_token')
+            window.dispatchEvent(new CustomEvent('seutoppers-auth-expired'))
+        }
         const message =
             typeof data === 'object' && data
                 ? data.message || data.error || `Request failed (${response.status})`
                 : data || `Request failed (${response.status})`
 
         throw new Error(message)
+    }
+
+    if (data && typeof data === 'object' && (data.status >= 400 || data.error)) {
+        throw new Error(data.message || data.error || 'Request failed')
     }
 
     // Cache GET response
@@ -263,6 +305,19 @@ export const api = {
             method: 'POST'
         }),
 
+    // Live chat endpoints
+    chatMessages: classId =>
+        request(`/chat/messages?classId=${encodeURIComponent(classId)}`, { skipCache: true }),
+
+    sendMessage: body =>
+        json('POST', '/chat/send', body),
+
+    teacherConversations: () =>
+        request('/chat/teacher/conversations', { skipCache: true }),
+
+    unreadChatCount: () =>
+        request('/chat/unread-count', { skipCache: true }),
+
     pendingApplications: () =>
         request('/admin/teacher-applications/pending'),
 
@@ -298,6 +353,11 @@ export const api = {
             method: 'POST'
         }),
 
+    removeTeacher: userId =>
+        request(`/admin/teachers/${userId}`, {
+            method: 'DELETE'
+        }),
+
     removeUser: userId =>
         request(`/admin/users/${userId}`, {
             method: 'DELETE'
@@ -322,4 +382,9 @@ export function fileUrl(value) {
 
     const origin = BASE.replace(/\/api$/, '')
     return `${origin}${value.startsWith('/') ? value : `/${value}`}`
+}
+
+export function getChatWebSocketUrl(token) {
+    const origin = BASE.replace(/\/api$/, '').replace(/^http/, 'ws')
+    return `${origin}/ws/chat?token=${encodeURIComponent(token || '')}`
 }

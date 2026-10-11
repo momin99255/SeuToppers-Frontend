@@ -5,9 +5,9 @@ import {
   ClipboardList, Clock3, FileText, GraduationCap, Home, LayoutDashboard, LogIn, LogOut,
   Menu, MessageCircle, Search, ShieldCheck, Star, UserRound, Users, WalletCards,
   X, Upload, Sparkles, Ban, CheckCircle2, AlertCircle, Eye, Plus, RefreshCw, LockKeyhole, Send,
-  Award, HelpCircle, CreditCard, Lock
+  Award, HelpCircle, CreditCard, Lock, Minus
 } from 'lucide-react'
-import { api, fileUrl } from './api'
+import { api, fileUrl, getChatWebSocketUrl, parseJwt, isTokenExpired } from './api'
 
 
 const requestInterestUiStyle = `
@@ -80,23 +80,21 @@ function readAuth() {
   try {
     const value = JSON.parse(localStorage.getItem('seutoppers_auth') || 'null')
 
-    if (!value?.token || !value?.userId || !value?.role) {
-      localStorage.removeItem('seutoppers_auth')
-      localStorage.removeItem('seutoppers_token')
+    if (!value?.token || !value?.userId || !value?.role || isTokenExpired(value.token)) {
+      clearAuth()
       return null
     }
 
     return value
   } catch {
-    localStorage.removeItem('seutoppers_auth')
-    localStorage.removeItem('seutoppers_token')
+    clearAuth()
     return null
   }
 }
 
 function saveAuth(value) {
   if (!value?.token || !value?.userId || !value?.role) {
-    throw new Error('Invalid authentication response')
+    throw new Error(value?.message || value?.error || 'Wrong username or password')
   }
 
   localStorage.setItem('seutoppers_auth', JSON.stringify(value))
@@ -139,6 +137,66 @@ function useNotifications(auth) {
       setLoading(false)
     }
   }
+
+  // Real-time WebSocket connection for instant live notifications
+  useEffect(() => {
+    const token = localStorage.getItem('seutoppers_token') || auth?.token
+    if (!token || !auth?.userId) return
+
+    let ws = null
+    let reconnectTimer = null
+    let isMounted = true
+
+    const connectWs = () => {
+      try {
+        const url = getChatWebSocketUrl(token)
+        ws = new WebSocket(url)
+
+        ws.onopen = () => {
+          // Connected live
+        }
+
+        ws.onmessage = (event) => {
+          try {
+            const packet = JSON.parse(event.data)
+            if (packet.type === 'NOTIFICATION' && packet.data) {
+              setItems(prev => {
+                if (prev.some(item => item.id === packet.data.id)) return prev
+                return [packet.data, ...prev]
+              })
+              window.dispatchEvent(new CustomEvent('seutoppers-live-notification', { detail: packet.data }))
+            } else if (packet.type === 'CHAT_MESSAGE' && packet.data) {
+              window.dispatchEvent(new CustomEvent('seutoppers-live-chat', { detail: packet.data }))
+            }
+          } catch (e) {
+            console.error('Error parsing live notification:', e)
+          }
+        }
+
+        ws.onclose = () => {
+          if (isMounted) {
+            reconnectTimer = setTimeout(connectWs, 3000)
+          }
+        }
+
+        ws.onerror = () => {
+          try { ws?.close() } catch {}
+        }
+      } catch {
+        if (isMounted) {
+          reconnectTimer = setTimeout(connectWs, 3000)
+        }
+      }
+    }
+
+    connectWs()
+
+    return () => {
+      isMounted = false
+      clearTimeout(reconnectTimer)
+      try { ws?.close() } catch {}
+    }
+  }, [auth?.userId, auth?.token])
 
   useEffect(() => {
     if (!auth?.userId) {
@@ -238,8 +296,68 @@ export default function App() {
     return () => document.removeEventListener('visibilitychange', onVisibility)
   }, [page])
 
+  // Auto-logout immediately when token expires (20 minutes duration)
+  useEffect(() => {
+    if (!auth?.token) return
+
+    const checkTokenExpiry = () => {
+      if (isTokenExpired(auth.token)) {
+        clearAuth()
+        setAuth(null)
+        go('login')
+        notify('Your session expired after 20 minutes. Please log in again.')
+        return true
+      }
+      return false
+    }
+
+    if (checkTokenExpiry()) return
+
+    const payload = parseJwt(auth.token)
+    let timer = null
+    if (payload?.exp) {
+      const msUntilExpiry = (payload.exp * 1000) - Date.now()
+      if (msUntilExpiry > 0) {
+        timer = setTimeout(() => {
+          checkTokenExpiry()
+        }, msUntilExpiry)
+      }
+    }
+
+    const interval = setInterval(checkTokenExpiry, 5000)
+
+    const onVisChange = () => {
+      if (!document.hidden) {
+        checkTokenExpiry()
+      }
+    }
+    document.addEventListener('visibilitychange', onVisChange)
+
+    const onAuthExpired = () => {
+      clearAuth()
+      setAuth(null)
+      go('login')
+      notify('Session expired. Please log in again.')
+    }
+    window.addEventListener('seutoppers-auth-expired', onAuthExpired)
+
+    return () => {
+      if (timer) clearTimeout(timer)
+      clearInterval(interval)
+      document.removeEventListener('visibilitychange', onVisChange)
+      window.removeEventListener('seutoppers-auth-expired', onAuthExpired)
+    }
+  }, [auth?.token])
+
   const notify = message => setToast(message)
-  const login = value => { saveAuth(value); setAuth(value); go('dashboard') }
+  const login = value => {
+    saveAuth(value)
+    setAuth(value)
+    go('dashboard')
+    if (value?.banned || (value?.bannedUntil && new Date(value.bannedUntil) > new Date())) {
+      notify('Your account is temporarily banned.')
+    }
+  }
   const logout = () => { clearAuth(); setAuth(null); go('login'); notify('You have been logged out.') }
   const busy = async action => { setLoading(true); try { return await action() } finally { setLoading(false) } }
 
@@ -381,10 +499,15 @@ function Login({ go, login, notify, busy }) {
     if (!password) return setError('Please enter your password.')
     setSubmitting(true)
     try {
-      login(await busy(() => api.login({ email: trimmedEmail, password })))
+      const authData = await busy(() => api.login({ email: trimmedEmail, password }))
+      if (!authData?.token) {
+        throw new Error(authData?.message || 'Wrong username or password')
+      }
+      login(authData)
       notify('Welcome back to SeuToppers.')
     } catch (e) {
-      setError(e.message)
+      const msg = e.message === 'Invalid authentication response' ? 'Wrong username or password' : e.message
+      setError(msg)
     } finally {
       setSubmitting(false)
     }
@@ -586,7 +709,58 @@ function Reset({ go, notify, busy }) {
 function AppShell({ auth, page, go, logout, notify, busy, notifications }) {
   const [open, setOpen] = useState(false), [notiOpen, setNotiOpen] = useState(false)
   const [profile, setProfile] = useState(null)
+  const [chatDropdownOpen, setChatDropdownOpen] = useState(false)
+  const [activeChat, setActiveChat] = useState(null)
+  const [isChatMinimized, setIsChatMinimized] = useState(false)
+  const [teacherConversations, setTeacherConversations] = useState([])
+  const [loadingConversations, setLoadingConversations] = useState(false)
+  const [chatUnreadCount, setChatUnreadCount] = useState(0)
   const teacher = auth.role === 'TEACHER'
+
+  const isBanned = Boolean(
+    auth?.banned ||
+    profile?.banned ||
+    (auth?.bannedUntil && new Date(auth.bannedUntil) > new Date()) ||
+    (profile?.bannedUntil && new Date(profile.bannedUntil) > new Date())
+  )
+
+  const openFloatingChat = (chatData) => {
+    if (isBanned) {
+      notify('Your account is temporarily banned. Feature access is restricted.')
+      return
+    }
+    setActiveChat(chatData)
+    setIsChatMinimized(false)
+  }
+
+  const loadTeacherConversations = async () => {
+    if (!teacher) return
+    try {
+      const data = await api.teacherConversations()
+      setTeacherConversations(data || [])
+      const totalUnread = (data || []).reduce((acc, c) => acc + (c.unreadCount || 0), 0)
+      setChatUnreadCount(totalUnread)
+    } catch {
+      // silent
+    }
+  }
+
+  useEffect(() => {
+    if (teacher) {
+      loadTeacherConversations()
+      const interval = setInterval(loadTeacherConversations, 5000)
+      const handleLiveChat = (e) => {
+        if (e.detail?.receiverId === auth?.userId) {
+          loadTeacherConversations()
+        }
+      }
+      window.addEventListener('seutoppers-live-chat', handleLiveChat)
+      return () => {
+        clearInterval(interval)
+        window.removeEventListener('seutoppers-live-chat', handleLiveChat)
+      }
+    }
+  }, [teacher, auth?.userId])
 
   const links = auth.role === 'ADMIN' ? [
     ['dashboard', 'Overview', LayoutDashboard], ['admin-teachers', 'Teachers', Users], ['admin-students', 'Students', UserRound], ['admin-applications', 'Applications', ClipboardList], ['admin-payments', 'Payments', WalletCards], ['admin-classes', 'Classes', CalendarDays]
@@ -648,15 +822,91 @@ function AppShell({ auth, page, go, logout, notify, busy, notifications }) {
         <button className="mobile-menu" onClick={() => setOpen(true)}><Menu/></button>
         <div className="crumb"><span className="crumb-app">{APP}</span><ChevronRight size={15} className="crumb-chevron"/><b>{links.find(x => x[0] === page)?.[1] || 'Overview'}</b></div>
         <div className="app-actions">
+          {teacher && (
+            <div className="chat-dropdown-wrap">
+              <button
+                type="button"
+                className="icon-btn teacher-chat-btn"
+                onClick={() => {
+                  setChatDropdownOpen(v => !v)
+                  setNotiOpen(false)
+                }}
+                title="Student Messages"
+                aria-label="Student Messages"
+              >
+                <MessageCircle size={18} />
+                {chatUnreadCount > 0 && <i className="notify-dot" />}
+              </button>
+              {chatDropdownOpen && (
+                <TeacherChatDropdown
+                  conversations={teacherConversations}
+                  loading={loadingConversations}
+                  onSelectStudent={(conv) => {
+                    setChatDropdownOpen(false)
+                    openFloatingChat({
+                      classId: conv.classId,
+                      classStatus: conv.status,
+                      otherUser: {
+                        id: conv.studentId,
+                        name: conv.studentName,
+                        avatar: conv.studentAvatar,
+                        role: 'Student'
+                      }
+                    })
+                  }}
+                  onClose={() => setChatDropdownOpen(false)}
+                />
+              )}
+            </div>
+          )}
           <div className="notification-wrap">
-            <button className="icon-btn" onClick={() => setNotiOpen(v => !v)}><Bell size={18}/>{notifications.items.some(x => !x.read) && <i className="notify-dot"/>}</button>
-            {notiOpen && <NotificationPanel items={notifications.items} markRead={notifications.markRead} markAll={notifications.markAll}/>}
+            <button
+              className="icon-btn"
+              onClick={() => {
+                const willOpen = !notiOpen
+                setNotiOpen(willOpen)
+                setChatDropdownOpen(false)
+                if (willOpen && notifications.items.some(x => !x.read)) {
+                  notifications.markAll()
+                }
+              }}
+              title="Notifications"
+            >
+              <Bell size={18}/>
+              {notifications.items.some(x => !x.read) && <i className="notify-dot"/>}
+            </button>
+            {notiOpen && <NotificationPanel items={notifications.items} markRead={notifications.markRead}/>}
           </div>
           <span className="role-pill">{teacher ? 'TEACHER + STUDENT' : auth.role}</span>
           <button className="icon-btn" onClick={logout}><LogOut size={17}/></button>
         </div>
       </header>
-      <main className="content"><Page page={page} auth={auth} go={go} notify={notify} busy={busy} notifications={notifications}/></main>
+      <main className="content">
+        {isBanned && (
+          <div className="warning-box" style={{
+            marginBottom: '1.25rem',
+            background: 'rgba(239, 68, 68, 0.12)',
+            borderColor: 'rgba(239, 68, 68, 0.35)',
+            borderRadius: '14px',
+            padding: '1rem 1.25rem',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '12px'
+          }}>
+            <AlertCircle size={22} color="#f87171" style={{ flexShrink: 0 }} />
+            <div>
+              <strong style={{ color: '#f87171', display: 'block', fontSize: '0.95rem' }}>Your account is temporarily banned</strong>
+              <p style={{ margin: '2px 0 0', color: '#cbd5e1', fontSize: '0.85rem' }}>
+                You can browse the platform, but access to functional features is restricted
+                {(auth?.bannedUntil || profile?.bannedUntil)
+                  ? ` until ${new Date(auth?.bannedUntil || profile?.bannedUntil).toLocaleDateString()}`
+                  : ''}.
+              </p>
+            </div>
+          </div>
+        )}
+        <Page page={page} auth={auth} go={go} notify={notify} busy={busy} notifications={notifications} openFloatingChat={openFloatingChat} isBanned={isBanned}/>
+      </main>
     </div>
     <nav className="mobile-bottom-nav">
       {mobileNavItems.map(([id, label, Icon]) => {
@@ -677,20 +927,30 @@ function AppShell({ auth, page, go, logout, notify, busy, notifications }) {
         )
       })}
     </nav>
+    {activeChat && (
+      <FloatingMessengerWindow
+        activeChat={activeChat}
+        isMinimized={isChatMinimized}
+        onToggleMinimize={() => setIsChatMinimized(v => !v)}
+        onClose={() => setActiveChat(null)}
+        auth={auth}
+        notify={notify}
+      />
+    )}
   </div>
 }
 
-function Page({ page, auth, go, notify, busy, notifications }) {
+function Page({ page, auth, go, notify, busy, notifications, openFloatingChat, isBanned }) {
   if (auth.role === 'ADMIN') return <AdminPage page={page} auth={auth} go={go} notify={notify} busy={busy} notifications={notifications}/>
   if (page === 'teachers') return <TeachersPage auth={auth} notify={notify} />
-  if (page === 'requests') return <RequestsPage auth={auth} go={go} notify={notify} busy={busy} />
-  if (page === 'create-request') return <CreateRequestPage notify={notify} />
-  if (page === 'service-taken') return <ServiceTakenPage auth={auth} notify={notify} />
-  if (page === 'service-given') return <ServiceGivenPage notify={notify} />
+  if (page === 'requests') return <RequestsPage auth={auth} go={go} notify={notify} busy={busy} isBanned={isBanned} />
+  if (page === 'create-request') return <CreateRequestPage notify={notify} isBanned={isBanned} />
+  if (page === 'service-taken') return <ServiceTakenPage auth={auth} notify={notify} openFloatingChat={openFloatingChat} isBanned={isBanned} />
+  if (page === 'service-given') return <ServiceGivenPage notify={notify} openFloatingChat={openFloatingChat} isBanned={isBanned} />
   if (page === 'payments') return <PaymentsPage notify={notify} />
   if (page === 'reviews') return <ReviewsPage auth={auth} />
   if (page === 'teacher-reviews') return <TeacherReviewsPage />
-  if (page === 'teacher-apply') return <TeacherApplyPage notify={notify} busy={busy}/>
+  if (page === 'teacher-apply') return <TeacherApplyPage notify={notify} busy={busy} isBanned={isBanned}/>
   if (page === 'profile') return <ProfilePage auth={auth} notify={notify} busy={busy}/>
   return <DashboardPage auth={auth} go={go} notify={notify}/>
 }
@@ -1220,7 +1480,7 @@ function RequestsPage({ auth, go, notify, busy }) {
   )
 }
 
-function CreateRequestPage({ notify }) {
+function CreateRequestPage({ notify, isBanned }) {
   const [form, setForm] = useState({
     topic: '',
     description: '',
@@ -1229,11 +1489,48 @@ function CreateRequestPage({ notify }) {
 
   const [error, setError] = useState('')
   const [done, setDone] = useState(false)
+  const [submitting, setSubmitting] = useState(false)
+  const myRequests = useLoad(api.myRequests, [])
+  const lastRequest = Array.isArray(myRequests.data) && myRequests.data.length > 0 ? myRequests.data[0] : null
+  const [secondsRemaining, setSecondsRemaining] = useState(0)
+
+  useEffect(() => {
+    if (!lastRequest?.createdAt) {
+      setSecondsRemaining(0)
+      return
+    }
+    const updateCountdown = () => {
+      const createdTime = new Date(lastRequest.createdAt).getTime()
+      if (Number.isNaN(createdTime)) {
+        setSecondsRemaining(0)
+        return
+      }
+      const diffMs = (createdTime + 5 * 60 * 1000) - Date.now()
+      const secs = Math.max(0, Math.ceil(diffMs / 1000))
+      setSecondsRemaining(secs)
+    }
+    updateCountdown()
+    const timer = setInterval(updateCountdown, 1000)
+    return () => clearInterval(timer)
+  }, [lastRequest?.createdAt])
 
   const submit = async e => {
     e.preventDefault()
     setError('')
 
+    if (isBanned) {
+      setError('Your account is temporarily banned. Feature access is restricted.')
+      return
+    }
+
+    if (secondsRemaining > 0) {
+      const mins = Math.floor(secondsRemaining / 60)
+      const secs = secondsRemaining % 60
+      setError(`You cannot post another help request within 5 minutes. Please wait ${mins}m ${secs}s before posting again.`)
+      return
+    }
+
+    setSubmitting(true)
     try {
       await api.createRequest({
         topic: form.topic,
@@ -1245,6 +1542,8 @@ function CreateRequestPage({ notify }) {
       notify('Help request posted successfully.')
     } catch (e) {
       setError(e.message)
+    } finally {
+      setSubmitting(false)
     }
   }
 
@@ -1279,6 +1578,22 @@ function CreateRequestPage({ notify }) {
         />
 
         <section className="panel form-panel">
+          {secondsRemaining > 0 && (
+            <div className="warning-box" style={{
+              marginBottom: '1.25rem',
+              borderColor: 'rgba(234, 179, 8, 0.4)',
+              background: 'rgba(234, 179, 8, 0.08)'
+            }}>
+              <Clock3 size={20} color="#eab308" />
+              <div>
+                <strong style={{ color: '#fde047' }}>5-Minute Rate Limit Active</strong>
+                <p style={{ margin: '2px 0 0', color: '#fef08a', fontSize: '0.85rem' }}>
+                  To prevent spam, you can post another help request in {Math.floor(secondsRemaining / 60)}m {secondsRemaining % 60}s.
+                </p>
+              </div>
+            </div>
+          )}
+
           <form className="form" onSubmit={submit}>
 
             <div className="form-grid">
@@ -1329,8 +1644,14 @@ function CreateRequestPage({ notify }) {
 
             <ErrorBox error={error}/>
 
-            <button className="primary" type="submit">
-              Post request <ArrowRight size={16}/>
+            <button className="primary" type="submit" disabled={submitting || secondsRemaining > 0}>
+              {submitting ? (
+                <Spinner/>
+              ) : secondsRemaining > 0 ? (
+                `Wait ${Math.floor(secondsRemaining / 60)}m ${secondsRemaining % 60}s`
+              ) : (
+                <>Post request <ArrowRight size={16}/></>
+              )}
             </button>
 
           </form>
@@ -1339,106 +1660,55 @@ function CreateRequestPage({ notify }) {
   )
 }
 
-function ServiceTakenPage({ auth, notify }) {
+function ServiceTakenPage({ auth, notify, openFloatingChat }) {
   const data = useLoad(api.myClasses, [])
   const teachers = useLoad(api.teachers, [])
+  const payments = useLoad(api.myPayments, [])
   const myReviews = useLoad(api.myReviews, [auth?.userId])
   const [reviews, setReviews] = useState(readStoredReviews)
+  const [activePaymentForPay, setActivePaymentForPay] = useState(null)
+  const [cancellingId, setCancellingId] = useState(null)
+
   const map = useMemo(() => Object.fromEntries((teachers.data || []).map(x => [x.userId, x])), [teachers.data])
+  const paymentMap = useMemo(() => Object.fromEntries((payments.data || []).map(p => [p.classId, p])), [payments.data])
+
   const reviewedIds = useMemo(() => {
     const ids = new Set((myReviews.data || []).map(x => x.classId))
     reviews.forEach(x => ids.add(x.classId))
     return ids
   }, [reviews, myReviews.data])
+
   const reviewedClasses = (data.data || []).filter(c => reviewedIds.has(c.id) || c.status === 'COMPLETED')
   const classesToReview = (data.data || []).filter(c => !reviewedIds.has(c.id) && c.status !== 'COMPLETED' && c.status !== 'CANCELLED')
 
   const refresh = async () => {
     await data.reload()
+    await payments.reload()
     await myReviews.reload()
     setReviews(readStoredReviews())
   }
 
-  return <div className="page-stack">
-    <PageHero title="Service taken" subtitle="Track accepted classes, their status and your teacher reviews."/>
-
-    {!!classesToReview.length && (
-        <section className="panel">
-          <SectionHeading title="Your classes" subtitle="Review a class when you are ready."/>
-          <div className="class-list">
-            {classesToReview.map(c => (
-                <ClassCard
-                    key={c.id}
-                    item={c}
-                    teacher={map[c.teacherId]}
-                    auth={auth}
-                    studentView
-                    pendingReview
-                    onReview={refresh}
-                    notify={notify}
-                />
-            ))}
-          </div>
-        </section>
-    )}
-
-    {!!reviewedClasses.length && (
-        <section className="panel">
-          <SectionHeading title="Reviewed classes" subtitle="Your submitted reviews are saved here."/>
-          <div className="class-list">
-            {reviewedClasses.map(c => (
-                <ClassCard
-                    key={c.id}
-                    item={c}
-                    teacher={map[c.teacherId]}
-                    auth={auth}
-                    studentView
-                    reviewed
-                    onReview={refresh}
-                    notify={notify}
-                />
-            ))}
-          </div>
-        </section>
-    )}
-
-    {!data.loading && !classesToReview.length && !reviewedClasses.length && (
-        <EmptyState icon={BookOpen} title="No services taken yet" text="A class will appear here after you accept a teacher from your request."/>
-    )}
-  </div>
-}
-
-function ServiceGivenPage({ notify }) {
-  const data = useLoad(api.teacherClasses, [])
-  return <div className="page-stack"><PageHero title="Service given" subtitle="Manage classes where you are the teacher."/><section className="class-list">{data.loading ? <LoadingCard/> : (data.data || []).map(c => <TeacherClassCard key={c.id} item={c} notify={notify} reload={data.reload}/>)}</section>{!data.loading && !data.data?.length && <EmptyState icon={GraduationCap} title="No services given yet" text="When a student books you, the class will appear here."/>}</div>
-}
-
-function PaymentsPage({ notify }) {
-  const payments = useLoad(api.myPayments, [])
-  const classes = useLoad(api.myClasses, [])
-  const teachers = useLoad(api.teachers, [])
-
-  const classMap = useMemo(() => Object.fromEntries((classes.data || []).map(x => [x.id, x])), [classes.data])
-  const teacherMap = useMemo(() => Object.fromEntries((teachers.data || []).map(x => [x.userId || x.id, x])), [teachers.data])
-
-  const [activePaymentForPay, setActivePaymentForPay] = useState(null)
-  const [activeChat, setActiveChat] = useState(null)
-  const [cancellingId, setCancellingId] = useState(null)
-
-  const getNormalizedStatus = (status) => {
-    if (status === 'CANCELLED') return 'CANCELLED'
-    if (status === 'PAID' || status === 'HELD' || status === 'RELEASED') return 'PAID'
-    return 'PENDING'
+  const handlePay = (classItem, teacher) => {
+    const payment = paymentMap[classItem.id] || {
+      id: classItem.id,
+      classId: classItem.id,
+      amount: classItem.amount || 100,
+      teacherId: classItem.teacherId,
+      gateway: 'BKASH'
+    }
+    setActivePaymentForPay({ payment, classItem, teacher })
   }
 
-  const handleCancel = async (p) => {
-    if (!window.confirm('Are you sure you want to cancel this class booking and payment?')) return
-    setCancellingId(p.id)
+  const handleCancel = async (classItem) => {
+    const payment = paymentMap[classItem.id]
+    if (!window.confirm('Are you sure you want to cancel this class booking?')) return
+    setCancellingId(classItem.id)
     try {
-      await api.cancelPayment(p.id)
-      notify('Class booking and payment have been cancelled.')
-      await payments.reload()
-      await classes.reload()
+      if (payment?.id) {
+        await api.cancelPayment(payment.id)
+      }
+      notify('Class booking has been cancelled.')
+      await refresh()
     } catch (e) {
       notify(e.message)
     } finally {
@@ -1449,15 +1719,150 @@ function PaymentsPage({ notify }) {
   const handlePaymentSuccess = async (message) => {
     notify(message || 'Payment successful! Your class is confirmed.')
     setActivePaymentForPay(null)
-    await payments.reload()
-    await classes.reload()
+    await refresh()
+  }
+
+  return (
+    <div className="page-stack">
+      <PageHero title="Service taken" subtitle="Track accepted classes, live chat with teachers, confirm payments, and submit reviews."/>
+
+      {!!classesToReview.length && (
+        <section className="panel">
+          <SectionHeading title="Your classes" subtitle="Chat with your teacher or complete payment to confirm your session."/>
+          <div className="class-list">
+            {classesToReview.map(c => (
+              <ClassCard
+                key={c.id}
+                item={c}
+                teacher={map[c.teacherId]}
+                auth={auth}
+                studentView
+                pendingReview
+                payment={paymentMap[c.id]}
+                onPay={() => handlePay(c, map[c.teacherId])}
+                onCancel={() => handleCancel(c)}
+                cancelling={cancellingId === c.id}
+                onOpenChat={() => {
+                  openFloatingChat?.({
+                    classId: c.id,
+                    classStatus: c.status,
+                    otherUser: {
+                      id: c.teacherId,
+                      name: map[c.teacherId]?.fullName || 'Teacher',
+                      avatar: map[c.teacherId]?.profileImage,
+                      role: 'Teacher'
+                    }
+                  })
+                }}
+                onReview={refresh}
+                notify={notify}
+              />
+            ))}
+          </div>
+        </section>
+      )}
+
+      {!!reviewedClasses.length && (
+        <section className="panel">
+          <SectionHeading title="Reviewed classes" subtitle="Your submitted reviews are saved here."/>
+          <div className="class-list">
+            {reviewedClasses.map(c => (
+              <ClassCard
+                key={c.id}
+                item={c}
+                teacher={map[c.teacherId]}
+                auth={auth}
+                studentView
+                reviewed
+                payment={paymentMap[c.id]}
+                onReview={refresh}
+                notify={notify}
+              />
+            ))}
+          </div>
+        </section>
+      )}
+
+      {!data.loading && !classesToReview.length && !reviewedClasses.length && (
+        <EmptyState icon={BookOpen} title="No services taken yet" text="A class will appear here after you accept a teacher from your request."/>
+      )}
+
+      {activePaymentForPay && (
+        <PaymentGatewayModal
+          payment={activePaymentForPay.payment}
+          classItem={activePaymentForPay.classItem}
+          teacher={activePaymentForPay.teacher}
+          onClose={() => setActivePaymentForPay(null)}
+          onSuccess={handlePaymentSuccess}
+        />
+      )}
+    </div>
+  )
+}
+
+function ServiceGivenPage({ notify, openFloatingChat }) {
+  const data = useLoad(api.teacherClasses, [])
+  return (
+    <div className="page-stack">
+      <PageHero title="Service given" subtitle="Manage classes where you are the teacher."/>
+      <section className="class-list">
+        {data.loading ? (
+          <LoadingCard/>
+        ) : (
+          (data.data || []).map(c => (
+            <TeacherClassCard
+              key={c.id}
+              item={c}
+              notify={notify}
+              reload={data.reload}
+              openFloatingChat={openFloatingChat}
+            />
+          ))
+        )}
+      </section>
+      {!data.loading && !data.data?.length && (
+        <EmptyState icon={GraduationCap} title="No services given yet" text="When a student books you, the class will appear here."/>
+      )}
+    </div>
+  )
+}
+
+function PaymentsPage({ notify }) {
+  const payments = useLoad(api.myPayments, [])
+  const classes = useLoad(api.myClasses, [])
+  const teachers = useLoad(api.teachers, [])
+  const [selectedPayment, setSelectedPayment] = useState(null)
+  const [cancellingId, setCancellingId] = useState(null)
+
+  const classMap = useMemo(() => Object.fromEntries((classes.data || []).map(x => [x.id, x])), [classes.data])
+  const teacherMap = useMemo(() => Object.fromEntries((teachers.data || []).map(x => [x.userId || x.id, x])), [teachers.data])
+
+  const getNormalizedStatus = (status) => {
+    if (status === 'CANCELLED') return 'CANCELLED'
+    if (status === 'PAID' || status === 'HELD' || status === 'RELEASED') return 'PAID'
+    return 'PENDING'
+  }
+
+  const handleCancel = async (paymentId) => {
+    if (!window.confirm('Are you sure you want to cancel this payment/booking?')) return
+    setCancellingId(paymentId)
+    try {
+      await api.cancelPayment(paymentId)
+      notify('Payment cancelled successfully.')
+      payments.reload()
+      classes.reload()
+    } catch (err) {
+      notify(err.message, 'error')
+    } finally {
+      setCancellingId(null)
+    }
   }
 
   return (
     <div className="page-stack">
       <PageHero
         title="Payment history"
-        subtitle="Track payment states, chat with teachers, cancel pending bookings, or confirm services via payment gateway."
+        subtitle="Track payment states, amounts, and transaction records."
       />
 
       <section className="panel">
@@ -1465,13 +1870,12 @@ function PaymentsPage({ notify }) {
           <table>
             <thead>
               <tr>
-                <th style={{ width: 64, textAlign: 'center' }}>Chat</th>
                 <th>Class</th>
                 <th>Amount</th>
                 <th>Gateway</th>
                 <th>Status</th>
                 <th>Date</th>
-                <th style={{ minWidth: 195 }}>Action</th>
+                <th>Action</th>
               </tr>
             </thead>
             <tbody>
@@ -1482,16 +1886,6 @@ function PaymentsPage({ notify }) {
 
                 return (
                   <tr key={p.id}>
-                    <td style={{ textAlign: 'center' }}>
-                      <button
-                        type="button"
-                        className="chat-action-btn"
-                        title="Chat with teacher (Demo)"
-                        onClick={() => setActiveChat({ payment: p, classItem, teacher })}
-                      >
-                        <MessageCircle size={16} />
-                      </button>
-                    </td>
                     <td>
                       <strong>{classItem?.scheduledTime || 'Class session'}</strong>
                       <small>{teacher?.fullName ? `Teacher: ${teacher.fullName}` : `Class ID: ${p.classId?.slice(-6) || '—'}`}</small>
@@ -1515,30 +1909,30 @@ function PaymentsPage({ notify }) {
                     </td>
                     <td>
                       {normalizedStatus === 'PENDING' ? (
-                        <div className="payment-action-group">
+                        <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
                           <button
                             type="button"
                             className="btn-pay-green"
-                            onClick={() => setActivePaymentForPay({ payment: p, classItem, teacher })}
+                            onClick={() => setSelectedPayment({ payment: p, classItem, teacher })}
                           >
-                            <CircleDollarSign size={14} /> Pay
+                            <CreditCard size={12} /> Pay
                           </button>
                           <button
                             type="button"
                             className="btn-cancel-red"
                             disabled={cancellingId === p.id}
-                            onClick={() => handleCancel(p)}
+                            onClick={() => handleCancel(p.id)}
                           >
-                            <X size={14} /> {cancellingId === p.id ? 'Cancelling...' : 'Cancel'}
+                            <X size={12} /> {cancellingId === p.id ? 'Cancelling...' : 'Cancel'}
                           </button>
                         </div>
                       ) : normalizedStatus === 'PAID' ? (
                         <span className="payment-confirmed-tag">
-                          <CheckCircle2 size={14} /> Paid & Confirmed
+                          <Check size={12} /> Confirmed
                         </span>
                       ) : (
                         <span className="payment-cancelled-tag">
-                          <Ban size={14} /> Cancelled
+                          Cancelled
                         </span>
                       )}
                     </td>
@@ -1553,22 +1947,18 @@ function PaymentsPage({ notify }) {
         )}
       </section>
 
-      {activePaymentForPay && (
+      {selectedPayment && (
         <PaymentGatewayModal
-          payment={activePaymentForPay.payment}
-          classItem={activePaymentForPay.classItem}
-          teacher={activePaymentForPay.teacher}
-          onClose={() => setActivePaymentForPay(null)}
-          onSuccess={handlePaymentSuccess}
-        />
-      )}
-
-      {activeChat && (
-        <DemoChatModal
-          payment={activeChat.payment}
-          classItem={activeChat.classItem}
-          teacher={activeChat.teacher}
-          onClose={() => setActiveChat(null)}
+          payment={selectedPayment.payment}
+          classItem={selectedPayment.classItem}
+          teacher={selectedPayment.teacher}
+          onClose={() => setSelectedPayment(null)}
+          onSuccess={(msg) => {
+            setSelectedPayment(null)
+            notify(msg)
+            payments.reload()
+            classes.reload()
+          }}
         />
       )}
     </div>
@@ -1691,100 +2081,346 @@ function PaymentGatewayModal({ payment, classItem, teacher, onClose, onSuccess }
   )
 }
 
-function DemoChatModal({ payment, classItem, teacher, onClose }) {
-  const teacherName = teacher?.fullName || 'Teacher'
-  const [messages, setMessages] = useState([
-    {
-      id: 1,
-      sender: 'teacher',
-      text: `Hello! Looking forward to our class${classItem?.scheduledTime ? ` on ${classItem.scheduledTime}` : ''}. Feel free to drop any questions or topics you'd like to prepare for!`,
-      time: '10:00 AM'
-    }
-  ])
-  const [input, setInput] = useState('')
-  const [isTyping, setIsTyping] = useState(false)
+function TeacherChatDropdown({ conversations, loading, onSelectStudent, onClose }) {
+  return (
+    <div className="teacher-chat-dropdown-panel" onClick={e => e.stopPropagation()}>
+      <div className="teacher-chat-dropdown-head">
+        <div>
+          <b>Student Messages</b>
+          <span className="chat-count-pill">{conversations.length}</span>
+        </div>
+        <button type="button" className="chat-dropdown-close-btn" onClick={onClose} title="Close">
+          <X size={15} />
+        </button>
+      </div>
 
-  const handleSend = (e) => {
-    e.preventDefault()
-    if (!input.trim()) return
-    const newMsg = {
-      id: Date.now(),
-      sender: 'student',
-      text: input.trim(),
-      time: 'Just now'
-    }
-    setMessages(prev => [...prev, newMsg])
-    setInput('')
-    setIsTyping(true)
+      <div className="teacher-chat-dropdown-body">
+        {loading ? (
+          <div className="chat-dropdown-loading">
+            <Spinner /> <span>Loading student chats...</span>
+          </div>
+        ) : !conversations.length ? (
+          <div className="chat-dropdown-empty">
+            <MessageCircle size={26} style={{ opacity: 0.35, marginBottom: 8 }} />
+            <p>No student conversations yet.</p>
+            <small>When a student sends a message, their conversation will appear here.</small>
+          </div>
+        ) : (
+          conversations.map(conv => (
+            <button
+              key={conv.classId}
+              type="button"
+              className={`teacher-chat-row ${conv.unreadCount > 0 ? 'unread' : ''}`}
+              onClick={() => onSelectStudent(conv)}
+            >
+              <div className="chat-user-avatar-wrap">
+                <div className="profile-avatar" style={{ width: 38, height: 38, borderRadius: 12 }}>
+                  {conv.studentAvatar ? (
+                    <img src={fileUrl(conv.studentAvatar)} alt={conv.studentName} />
+                  ) : (
+                    initials(conv.studentName || 'Student')
+                  )}
+                </div>
+                <span className="online-indicator-dot" />
+              </div>
+              <div className="teacher-chat-row-info">
+                <div className="teacher-chat-row-top">
+                  <strong>{conv.studentName || 'Student'}</strong>
+                  {conv.lastMessageTime && (
+                    <span className="chat-timestamp">{formatChatTime(conv.lastMessageTime)}</span>
+                  )}
+                </div>
+                {conv.lastMessage && (
+                  <p className="teacher-chat-snippet">{conv.lastMessage}</p>
+                )}
+              </div>
+              {conv.unreadCount > 0 && (
+                <span className="chat-unread-badge" style={{ marginLeft: 'auto', alignSelf: 'center' }}>{conv.unreadCount}</span>
+              )}
+            </button>
+          ))
+        )}
+      </div>
+    </div>
+  )
+}
 
-    setTimeout(() => {
-      setIsTyping(false)
-      setMessages(prev => [
-        ...prev,
-        {
-          id: Date.now() + 1,
-          sender: 'teacher',
-          text: 'Got it! I will have everything ready for our session. (Demo mode: Real-time messaging will be linked soon)',
-          time: 'Just now'
+function FloatingMessengerWindow({ activeChat, isMinimized, onToggleMinimize, onClose, auth, notify }) {
+  const [messages, setMessages] = useState([])
+  const [text, setText] = useState('')
+  const [sending, setSending] = useState(false)
+  const [loading, setLoading] = useState(true)
+  const messagesEndRef = React.useRef(null)
+
+  const isTeacher = auth?.role === 'TEACHER'
+  const isClassCompleted = activeChat?.classStatus === 'COMPLETED'
+  const studentHasMessaged = messages.some(m => m.senderRole === 'STUDENT' || (m.senderId !== auth?.userId && isTeacher))
+  const canSend = !isClassCompleted && (!isTeacher || studentHasMessaged)
+
+  const scrollToBottom = () => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+  }
+
+  // Load message history for active class
+  useEffect(() => {
+    let mounted = true
+    if (!activeChat?.classId) return
+
+    setLoading(true)
+    api.chatMessages(activeChat.classId)
+      .then(msgs => {
+        if (mounted) {
+          setMessages(msgs || [])
+          setLoading(false)
+          setTimeout(scrollToBottom, 60)
         }
-      ])
-    }, 1000)
+      })
+      .catch(() => {
+        if (mounted) setLoading(false)
+      })
+
+    return () => {
+      mounted = false
+    }
+  }, [activeChat?.classId])
+
+  // WebSocket Live Connection
+  useEffect(() => {
+    const token = localStorage.getItem('seutoppers_token')
+    if (!token || !activeChat?.classId) return
+
+    let ws = null
+    let reconnectTimeout = null
+
+    const connect = () => {
+      try {
+        const url = getChatWebSocketUrl(token)
+        ws = new WebSocket(url)
+
+        ws.onopen = () => {
+          // Connected live
+        }
+
+        ws.onmessage = (event) => {
+          try {
+            const packet = JSON.parse(event.data)
+            if (packet.type === 'CHAT_MESSAGE' && packet.data?.classId === activeChat.classId) {
+              setMessages(prev => {
+                if (prev.some(m => m.id === packet.data.id)) return prev
+                return [...prev, packet.data]
+              })
+              setTimeout(scrollToBottom, 50)
+            }
+          } catch {}
+        }
+
+        ws.onclose = () => {
+          reconnectTimeout = setTimeout(connect, 4000)
+        }
+
+        ws.onerror = () => {
+          try { ws?.close() } catch {}
+        }
+      } catch {}
+    }
+
+    connect()
+
+    return () => {
+      clearTimeout(reconnectTimeout)
+      try { ws?.close() } catch {}
+    }
+  }, [activeChat?.classId])
+
+  const handleSend = async (e) => {
+    e?.preventDefault()
+    const content = text.trim()
+    if (!content || sending || !canSend) return
+
+    if (auth?.banned || (auth?.bannedUntil && new Date(auth.bannedUntil) > new Date())) {
+      notify?.('Your account is temporarily banned. Feature access is restricted.')
+      return
+    }
+
+    setSending(true)
+    try {
+      const saved = await api.sendMessage({
+        classId: activeChat.classId,
+        content
+      })
+      setMessages(prev => {
+        if (prev.some(m => m.id === saved.id)) return prev
+        return [...prev, saved]
+      })
+      setText('')
+      setTimeout(scrollToBottom, 50)
+    } catch (err) {
+      notify?.(err.message || 'Failed to send message')
+    } finally {
+      setSending(false)
+    }
+  }
+
+  const other = activeChat.otherUser || {}
+  const otherName = other.name || 'User'
+
+  if (isMinimized) {
+    return (
+      <aside
+        className="floating-messenger-minimized"
+        onClick={onToggleMinimize}
+        title={`Chat with ${otherName}`}
+        aria-label={`Open chat with ${otherName}`}
+      >
+        <div className="minimized-avatar-wrap">
+          <div className="profile-avatar" style={{ width: 32, height: 32, borderRadius: 10 }}>
+            {other.avatar ? <img src={fileUrl(other.avatar)} alt="" /> : initials(otherName)}
+          </div>
+          <span className="online-indicator-dot" />
+        </div>
+        <div className="minimized-info">
+          <strong>{otherName}</strong>
+        </div>
+        <button
+          type="button"
+          className="minimized-close-btn"
+          onClick={(e) => {
+            e.stopPropagation()
+            onClose()
+          }}
+          title="Close chat"
+          aria-label="Close chat"
+        >
+          <X size={14} />
+        </button>
+      </aside>
+    )
   }
 
   return (
-    <Modal title={`Chat with ${teacherName}`} onClose={onClose}>
-      <div className="demo-chat-box">
-        <div className="demo-chat-header-bar">
-          <div className="demo-chat-user-info">
+    <aside className="floating-messenger-window" aria-label={`Chat with ${otherName}`}>
+      {/* Messenger Header: Minimal with Name and DP only */}
+      <header className="messenger-header">
+        <div className="messenger-user-block">
+          <div className="messenger-avatar-wrap">
             <div className="profile-avatar" style={{ width: 34, height: 34, borderRadius: 10 }}>
-              {teacher?.profileImage ? (
-                <img src={fileUrl(teacher.profileImage)} alt="" />
-              ) : (
-                initials(teacherName)
-              )}
+              {other.avatar ? <img src={fileUrl(other.avatar)} alt="" /> : initials(otherName)}
             </div>
-            <div>
-              <strong>{teacherName}</strong>
-              <small><span className="chat-online-dot" /> Active now (Demo)</small>
-            </div>
+            <span className="online-indicator-dot" />
           </div>
-          <span className="demo-chat-pill">Demo Chat</span>
+          <div className="messenger-user-titles">
+            <strong>{otherName}</strong>
+          </div>
         </div>
 
-        <div className="demo-chat-body">
-          <div className="demo-chat-notice">
-            <span>Direct student-teacher chat demo for class #{payment?.classId?.slice(-6) || 'session'}</span>
-          </div>
-          {messages.map(m => (
-            <div key={m.id} className={`chat-bubble-row ${m.sender === 'student' ? 'me' : 'them'}`}>
-              <div className={`chat-bubble ${m.sender === 'student' ? 'bubble-me' : 'bubble-them'}`}>
-                <p style={{ margin: 0 }}>{m.text}</p>
-                <small>{m.time}</small>
-              </div>
-            </div>
-          ))}
-          {isTyping && (
-            <div className="chat-bubble-row them">
-              <div className="chat-bubble bubble-them typing-indicator">
-                <span>{teacherName} is typing...</span>
-              </div>
-            </div>
-          )}
+        <div className="messenger-header-actions">
+          <button
+            type="button"
+            className="messenger-control-btn"
+            onClick={onToggleMinimize}
+            title="Minimize"
+            aria-label="Minimize chat window"
+          >
+            <Minus size={15} />
+          </button>
+          <button
+            type="button"
+            className="messenger-control-btn close"
+            onClick={onClose}
+            title="Close"
+            aria-label="Close chat window"
+          >
+            <X size={15} />
+          </button>
         </div>
+      </header>
 
-        <form className="demo-chat-footer" onSubmit={handleSend}>
+      {/* Messages Feed */}
+      <div className="messenger-messages-body">
+        {loading ? (
+          <div className="chat-loading-center">
+            <Spinner />
+            <span>Loading conversation...</span>
+          </div>
+        ) : !messages.length ? (
+          <div className="chat-empty-convo">
+            <div className="chat-empty-icon">
+              <MessageCircle size={28} />
+            </div>
+            <strong>{otherName}</strong>
+            <p>
+              {isTeacher
+                ? "Waiting for student to initiate the conversation."
+                : "Send a message below to start chatting."}
+            </p>
+          </div>
+        ) : (
+          messages.map(m => {
+            const isMe = m.senderId === auth?.userId
+            return (
+              <div key={m.id} className={`messenger-bubble-row ${isMe ? 'me' : 'them'}`}>
+                {!isMe && (
+                  <div className="bubble-sender-avatar" title={m.senderName}>
+                    {m.senderAvatar ? (
+                      <img src={fileUrl(m.senderAvatar)} alt="" />
+                    ) : (
+                      initials(m.senderName || 'U')
+                    )}
+                  </div>
+                )}
+                <div className={`messenger-bubble ${isMe ? 'bubble-me' : 'bubble-them'}`}>
+                  <p>{m.content}</p>
+                  <span className="bubble-time">{formatChatTime(m.createdAt)}</span>
+                </div>
+              </div>
+            )
+          })
+        )}
+        <div ref={messagesEndRef} />
+      </div>
+
+      {/* Messenger Footer Input */}
+      <footer className="messenger-footer">
+        {isClassCompleted ? (
+          <div className="chat-notice-box">
+            <Lock size={13} />
+            <span>Class completed. Messages cannot be sent.</span>
+          </div>
+        ) : isTeacher && !studentHasMessaged ? (
+          <div className="chat-notice-box info">
+            <AlertCircle size={13} />
+            <span>Waiting for student to initiate chat. You can reply once they message.</span>
+          </div>
+        ) : null}
+
+        <form onSubmit={handleSend} className="messenger-form">
           <input
             type="text"
-            placeholder="Type your message..."
-            value={input}
-            onChange={e => setInput(e.target.value)}
+            className="messenger-input"
+            placeholder={
+              isClassCompleted
+                ? "Class completed. Messaging is closed."
+                : isTeacher && !studentHasMessaged
+                ? "Waiting for student to message..."
+                : `Message ${otherName}...`
+            }
+            value={text}
+            onChange={e => setText(e.target.value)}
+            disabled={!canSend || sending}
+            autoFocus={canSend}
           />
-          <button type="submit" className="primary small" disabled={!input.trim()}>
-            <Send size={15} /> Send
+          <button
+            type="submit"
+            className="messenger-send-btn"
+            disabled={!canSend || !text.trim() || sending}
+            title={canSend ? "Send (Enter)" : "Messaging disabled"}
+            aria-label="Send message"
+          >
+            <Send size={15} />
           </button>
         </form>
-      </div>
-    </Modal>
+      </footer>
+    </aside>
   )
 }
 
@@ -1895,15 +2531,33 @@ function TeacherReviewsPage() {
   )
 }
 
-function TeacherApplyPage({ notify, busy }) {
+function TeacherApplyPage({ notify, busy, isBanned }) {
   const profile = useLoad(api.studentProfile, []), completion = useLoad(api.completion, []), app = useLoad(api.myTeacherApplication, [])
   const [cv, setCv] = useState(null), [form, setForm] = useState({ qualification: '', experience: '', subjects: '', motivation: '', currentCgpa: '', semester: '', batch: '' }), [error, setError] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const update = (k, v) => setForm(x => ({ ...x, [k]: v }))
 
+  const rawApplication = app.data
+  const existing = ['PENDING', 'REJECTED', 'APPROVED'].includes(rawApplication?.status) ? rawApplication : null
+  const pending = existing?.status === 'PENDING'
+  const rejected = existing?.status === 'REJECTED'
+  const approved = existing?.status === 'APPROVED'
+
+  const reapplyDate = existing?.reapplyEligibleAt
+    ? new Date(existing.reapplyEligibleAt)
+    : existing?.reviewedAt
+      ? new Date(new Date(existing.reviewedAt).getTime() + 90 * 24 * 60 * 60 * 1000)
+      : existing?.submittedAt
+        ? new Date(new Date(existing.submittedAt).getTime() + 90 * 24 * 60 * 60 * 1000)
+        : null
+
+  const isCooldownActive = Boolean(rejected && reapplyDate && Date.now() < reapplyDate.getTime())
+
   const submit = async e => {
     e.preventDefault()
     setError('')
+    if (isBanned) return setError('Your account is temporarily banned. Feature access is restricted.')
+    if (isCooldownActive) return setError(`Your application was rejected. You can apply again from ${formatDate(reapplyDate)}.`)
     if ((completion.data || 0) < 80) return setError('Complete at least 80% of your student profile first.')
     if (Number(form.currentCgpa) < 3.8) return setError('Minimum CGPA is 3.80 to apply as a teacher.')
     if (!cv) return setError('Upload your CV first.')
@@ -1944,12 +2598,6 @@ function TeacherApplyPage({ notify, busy }) {
     }
   }
 
-  const rawApplication = app.data
-  const existing = ['PENDING', 'REJECTED', 'APPROVED'].includes(rawApplication?.status) ? rawApplication : null
-  const pending = existing?.status === 'PENDING'
-  const rejected = existing?.status === 'REJECTED'
-  const approved = existing?.status === 'APPROVED'
-
   return <div className="page-stack">
     <PageHero title="Become a teacher" subtitle="Your application goes to the admin panel for CV review and interview."/>
     <section className="panel application-banner">
@@ -1976,11 +2624,17 @@ function TeacherApplyPage({ notify, busy }) {
       </div>
     </section>}
 
-    {rejected && <section className="panel application-status">
+    {rejected && <section className="panel application-status" style={isCooldownActive ? { borderColor: 'rgba(239, 68, 68, 0.4)', background: 'rgba(239, 68, 68, 0.05)' } : {}}>
       <div>
-        <span className="eyebrow">APPLICATION REJECTED</span>
-        <h3>You can apply again</h3>
-        <p>Your previous application was rejected. Update your information and submit a new application.</p>
+        <span className="eyebrow" style={isCooldownActive ? { color: '#f87171' } : {}}>APPLICATION REJECTED</span>
+        <h3 style={isCooldownActive ? { color: '#fca5a5' } : {}}>
+          {isCooldownActive ? `You can apply again from ${formatDate(reapplyDate)}` : 'You can apply again'}
+        </h3>
+        <p>
+          {isCooldownActive
+            ? `Your previous application was rejected. You can apply again from ${formatDate(reapplyDate)} (90-day cooldown).`
+            : 'Your 90-day cooldown period has ended. You can now submit a new application.'}
+        </p>
       </div>
       <StatusPill value="REJECTED"/>
     </section>}
@@ -1994,7 +2648,45 @@ function TeacherApplyPage({ notify, busy }) {
       <StatusPill value="APPROVED"/>
     </section>}
 
-    {!pending && !approved && <section className="panel form-panel">
+    {!pending && !approved && isCooldownActive && (
+      <section className="panel form-panel" style={{ textAlign: 'center', padding: '3rem 2rem' }}>
+        <div style={{ maxWidth: 460, margin: '0 auto' }}>
+          <div style={{
+            width: 52,
+            height: 52,
+            borderRadius: '50%',
+            background: 'rgba(239, 68, 68, 0.12)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            margin: '0 auto 1.25rem',
+            color: '#f87171'
+          }}>
+            <CalendarDays size={26} />
+          </div>
+          <h2 style={{ fontSize: '1.35rem', marginBottom: '0.5rem', color: '#f1f5f9' }}>
+            Application Cooldown Active
+          </h2>
+          <p style={{ color: '#94a3b8', fontSize: '0.92rem', lineHeight: 1.6, marginBottom: '1.25rem' }}>
+            Following administrative review, teacher applications have a 90-day cooldown period before reapplication.
+          </p>
+          <div style={{
+            padding: '10px 18px',
+            borderRadius: 12,
+            background: 'rgba(239, 68, 68, 0.1)',
+            border: '1px solid rgba(239, 68, 68, 0.3)',
+            color: '#fca5a5',
+            fontWeight: 700,
+            fontSize: '0.9rem',
+            display: 'inline-block'
+          }}>
+            You can apply again from {formatDate(reapplyDate)}
+          </div>
+        </div>
+      </section>
+    )}
+
+    {!pending && !approved && !isCooldownActive && <section className="panel form-panel">
       <div className="section-heading">
         <div><span className="eyebrow">{rejected ? 'APPLY AGAIN' : 'TEACHER APPLICATION'}</span><h2>{rejected ? 'Submit a new application' : 'Apply to become a teacher'}</h2><p>Complete all required information and upload your CV before submitting.</p></div>
       </div>
@@ -2456,11 +3148,14 @@ function AdminTeacherCard({ teacher, reload, notify }) {
     notify(message)
   }
 
-  const ban = async () => {
+  const isBanned = teacher.banned || (teacher.bannedUntil && new Date(teacher.bannedUntil) > new Date())
+
+  const ban = async (durationDays) => {
     setBusy(true)
     try {
-      await api.banUser(teacher.userId, Number(days))
-      showNotify('Teacher banned successfully.')
+      const d = durationDays !== undefined ? durationDays : Number(days)
+      await api.banUser(teacher.userId, d)
+      showNotify(d <= 0 ? 'Teacher unbanned successfully.' : `Teacher banned for ${d} days.`)
       setBanOpen(false)
       reload()
     } catch (e) {
@@ -2473,8 +3168,8 @@ function AdminTeacherCard({ teacher, reload, notify }) {
   const remove = async () => {
     setBusy(true)
     try {
-      await api.removeUser(teacher.userId)
-      showNotify('Teacher removed permanently.')
+      await api.removeTeacher(teacher.userId)
+      showNotify('Teacher converted to student profile successfully.')
       setRemoveOpen(false)
       reload()
     } catch (e) {
@@ -2495,7 +3190,14 @@ function AdminTeacherCard({ teacher, reload, notify }) {
                   initials(teacher.fullName)
               )}
             </div>
-            <div className="rank">Teacher</div>
+            <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+              <div className="rank">Teacher</div>
+              {isBanned && (
+                <span className="role-tag" style={{ background: 'rgba(239, 68, 68, 0.2)', color: '#f87171', border: '1px solid rgba(239, 68, 68, 0.4)' }}>
+                  Banned
+                </span>
+              )}
+            </div>
           </div>
 
           <h3>{teacher.fullName || 'Teacher'}</h3>
@@ -2555,11 +3257,23 @@ function AdminTeacherCard({ teacher, reload, notify }) {
         {banOpen && (
             <Modal title="Ban teacher" onClose={() => !busy && setBanOpen(false)}>
               <div className="form">
-                <p className="muted">
-                  The teacher will not be able to log in or access the platform during the selected period.
-                </p>
+                {isBanned ? (
+                  <div className="warning-box" style={{ borderColor: 'rgba(239, 68, 68, 0.4)', background: 'rgba(239, 68, 68, 0.1)' }}>
+                    <Ban size={20} style={{ color: '#f87171' }} />
+                    <div>
+                      <strong style={{ color: '#fecaca' }}>Currently Banned</strong>
+                      <p style={{ color: '#fca5a5' }}>
+                        This teacher is currently banned. They can log in to view their account, but cannot access any features.
+                      </p>
+                    </div>
+                  </div>
+                ) : (
+                  <p className="muted">
+                    The teacher will be able to log in to SeuToppers, but cannot access any features or actions during the ban period.
+                  </p>
+                )}
                 <SelectField
-                    label="Ban duration"
+                    label={isBanned ? "Update ban duration" : "Ban duration"}
                     value={days}
                     onChange={e => setDays(e.target.value)}
                     options={['1', '3', '7', '14', '30', '90']}
@@ -2568,8 +3282,13 @@ function AdminTeacherCard({ teacher, reload, notify }) {
                   <button className="secondary" onClick={() => setBanOpen(false)} disabled={busy}>
                     Cancel
                   </button>
-                  <button className="danger" onClick={ban} disabled={busy}>
-                    {busy ? <Spinner /> : `Ban for ${days} days`}
+                  {isBanned && (
+                    <button className="secondary" style={{ color: '#70e6cf', borderColor: 'rgba(112, 230, 207, 0.4)' }} onClick={() => ban(0)} disabled={busy}>
+                      {busy ? <Spinner /> : 'Lift Ban / Unban'}
+                    </button>
+                  )}
+                  <button className="danger" onClick={() => ban()} disabled={busy}>
+                    {busy ? <Spinner /> : (isBanned ? `Update ban (${days} days)` : `Ban for ${days} days`)}
                   </button>
                 </div>
               </div>
@@ -2577,13 +3296,13 @@ function AdminTeacherCard({ teacher, reload, notify }) {
         )}
 
         {removeOpen && (
-            <Modal title="Remove teacher" onClose={() => !busy && setRemoveOpen(false)}>
+            <Modal title="Convert to student" onClose={() => !busy && setRemoveOpen(false)}>
               <div className="form">
                 <div className="warning-box">
                   <AlertCircle size={20} />
                   <div>
-                    <strong>This action is permanent.</strong>
-                    <p>The teacher account, profile and related teacher application will be permanently removed.</p>
+                    <strong>Convert teacher to student</strong>
+                    <p>Removing this teacher will revoke their teaching privileges and convert them to a normal student account. They will be moved to the student list.</p>
                   </div>
                 </div>
                 <div className="form-actions">
@@ -2591,7 +3310,7 @@ function AdminTeacherCard({ teacher, reload, notify }) {
                     Cancel
                   </button>
                   <button className="danger" onClick={remove} disabled={busy}>
-                    {busy ? <Spinner /> : 'Yes, remove permanently'}
+                    {busy ? <Spinner /> : 'Yes, convert to student'}
                   </button>
                 </div>
               </div>
@@ -2608,11 +3327,14 @@ function AdminStudentCard({ student, notify, reload }) {
   const [days, setDays] = useState('7')
   const [busy, setBusy] = useState(false)
 
-  const ban = async () => {
+  const isBanned = student.banned || (student.bannedUntil && new Date(student.bannedUntil) > new Date())
+
+  const ban = async (durationDays) => {
     setBusy(true)
     try {
-      await api.banUser(student.userId, Number(days))
-      notify('Student banned successfully.')
+      const d = durationDays !== undefined ? durationDays : Number(days)
+      await api.banUser(student.userId, d)
+      notify(d <= 0 ? 'Student unbanned successfully.' : `Student banned for ${d} days.`)
       setBanOpen(false)
       reload()
     } catch (e) {
@@ -2648,7 +3370,14 @@ function AdminStudentCard({ student, notify, reload }) {
           </div>
 
           <div>
-            <h3>{student.fullName || student.email || 'Student'}</h3>
+            <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+              <h3>{student.fullName || student.email || 'Student'}</h3>
+              {isBanned && (
+                <span className="role-tag" style={{ background: 'rgba(239, 68, 68, 0.2)', color: '#f87171', border: '1px solid rgba(239, 68, 68, 0.4)' }}>
+                  Banned
+                </span>
+              )}
+            </div>
             <p>
               {student.department || 'Department not set'}
               {student.batch ? ` · Batch ${student.batch}` : ''}
@@ -2694,13 +3423,25 @@ function AdminStudentCard({ student, notify, reload }) {
         )}
 
         {banOpen && (
-            <Modal title="Ban student" onClose={() => !busy && setBanOpen(false)}>
+            <Modal title={isBanned ? "Manage student ban" : "Ban student"} onClose={() => !busy && setBanOpen(false)}>
               <div className="form">
-                <p className="muted">
-                  The student will not be able to log in or access the platform during the selected period.
-                </p>
+                {isBanned ? (
+                  <div className="warning-box" style={{ borderColor: 'rgba(239, 68, 68, 0.4)', background: 'rgba(239, 68, 68, 0.1)' }}>
+                    <Ban size={20} style={{ color: '#f87171' }} />
+                    <div>
+                      <strong style={{ color: '#fecaca' }}>Currently Banned</strong>
+                      <p style={{ color: '#fca5a5' }}>
+                        This student is currently banned. They can log in to view their account, but cannot access any features.
+                      </p>
+                    </div>
+                  </div>
+                ) : (
+                  <p className="muted">
+                    The student will be able to log in to SeuToppers, but cannot access any features or actions during the ban period.
+                  </p>
+                )}
                 <SelectField
-                    label="Ban duration"
+                    label={isBanned ? "Update ban duration" : "Ban duration"}
                     value={days}
                     onChange={e => setDays(e.target.value)}
                     options={['1', '3', '7', '14', '30', '90']}
@@ -2709,8 +3450,13 @@ function AdminStudentCard({ student, notify, reload }) {
                   <button className="secondary" onClick={() => setBanOpen(false)} disabled={busy}>
                     Cancel
                   </button>
-                  <button className="danger" onClick={ban} disabled={busy}>
-                    {busy ? <Spinner /> : `Ban for ${days} days`}
+                  {isBanned && (
+                    <button className="secondary" style={{ color: '#70e6cf', borderColor: 'rgba(112, 230, 207, 0.4)' }} onClick={() => ban(0)} disabled={busy}>
+                      {busy ? <Spinner /> : 'Lift Ban / Unban'}
+                    </button>
+                  )}
+                  <button className="danger" onClick={() => ban()} disabled={busy}>
+                    {busy ? <Spinner /> : (isBanned ? `Update ban (${days} days)` : `Ban for ${days} days`)}
                   </button>
                 </div>
               </div>
@@ -2724,7 +3470,7 @@ function AdminStudentCard({ student, notify, reload }) {
                   <AlertCircle size={20} />
                   <div>
                     <strong>This action is permanent.</strong>
-                    <p>The account and profile will be permanently removed.</p>
+                    <p>The student account and profile will be permanently removed from the database.</p>
                   </div>
                 </div>
                 <div className="form-actions">
@@ -3175,8 +3921,23 @@ function InterestModal({ requestId, interests = [], requestOwnerId, currentUserI
 
 function BookingModal({ request, onClose, onDone }) { const [teacherId, setTeacherId] = useState(''), [time, setTime] = useState(request.requestedTime || ''), [amount, setAmount] = useState(request.budget || ''), [teachers, setTeachers] = useState([]), [error, setError] = useState(''); useEffect(() => { api.interests(request.id).then(setTeachers).catch(() => {}) }, [request.id]); const selected = teachers.find(x => x.status === 'SELECTED'); useEffect(() => { if (selected) setTeacherId(selected.teacherId) }, [selected]); const submit = async e => { e.preventDefault(); try { await api.createClass({ requestId: request.id, teacherId, scheduledTime: time, amount: Number(amount) }); onDone() } catch (e) { setError(e.message) } }; return <Modal title="Book your class" onClose={onClose}><form className="form" onSubmit={submit}><InfoRow label="Selected teacher" value={selected?.teacherName || 'Selected teacher'}/><Field label="Scheduled time" value={time} onChange={e => setTime(e.target.value)} required/><Field label="Amount (BDT)" type="number" value={amount} onChange={e => setAmount(e.target.value)} required/><ErrorBox error={error}/><button className="primary full">Create class booking <ArrowRight size={16}/></button></form></Modal> }
 
-function ClassCard({ item, teacher, auth, studentView, pendingReview, reviewed, onReview, notify }) {
+function ClassCard({
+  item,
+  teacher,
+  auth,
+  studentView,
+  pendingReview,
+  reviewed,
+  payment,
+  onPay,
+  onCancel,
+  cancelling,
+  onOpenChat,
+  onReview,
+  notify
+}) {
   const [reviewOpen, setReviewOpen] = useState(false)
+  const isPendingPayment = item.status === 'PENDING_PAYMENT'
   const isStarted = item.status === 'STARTED'
   const isCompleted = item.status === 'COMPLETED' || reviewed
 
@@ -3193,29 +3954,67 @@ function ClassCard({ item, teacher, auth, studentView, pendingReview, reviewed, 
       <div className="class-meta"><span>{item.scheduledTime || 'Time not set'}</span><span>৳{item.amount ?? '-'}</span><span>{formatDate(item.createdAt)}</span></div>
     </div>
 
-    {studentView && !isCompleted && (
-      isStarted ? (
-        <button className="primary small" onClick={() => setReviewOpen(true)}>
-          <Star size={15}/> Rate teacher
-        </button>
-      ) : (
+    <div className="class-card-actions-row">
+      {/* Interactive Chat Button - Available once teacher is accepted and active */}
+      {!isCompleted && item.status !== 'CANCELLED' && (
         <button
-          className="secondary small"
-          disabled
-          style={{ opacity: 0.55, cursor: 'not-allowed', display: 'inline-flex', alignItems: 'center', gap: 6 }}
-          title="Teacher must start the class before you can review"
+          type="button"
+          className="chat-interactive-btn"
+          onClick={onOpenChat}
+          title={`Live chat with ${teacher?.fullName || 'Teacher'}`}
         >
-          <Clock3 size={15}/> Rate teacher (Unmarked until started)
+          <span className="chat-interactive-icon-wrap">
+            <MessageCircle size={15} />
+          </span>
+          <span className="chat-interactive-text">Chat</span>
         </button>
-      )
-    )}
+      )}
 
-    {studentView && isCompleted && (
-      <div className="request-confirmed">
-        <CheckCircle2 size={16}/>
-        <span>Review submitted. Class completed.</span>
-      </div>
-    )}
+      {/* Pending Payment: Pay Now and Cancel buttons in Service Taken */}
+      {studentView && isPendingPayment && (
+        <div className="payment-action-group">
+          <button
+            type="button"
+            className="btn-pay-green small"
+            onClick={onPay}
+          >
+            <CircleDollarSign size={14} /> Pay Now
+          </button>
+          <button
+            type="button"
+            className="btn-cancel-red small"
+            disabled={cancelling}
+            onClick={onCancel}
+          >
+            <X size={14} /> {cancelling ? 'Cancelling...' : 'Cancel'}
+          </button>
+        </div>
+      )}
+
+      {studentView && !isPendingPayment && !isCompleted && (
+        isStarted ? (
+          <button className="primary small" onClick={() => setReviewOpen(true)}>
+            <Star size={15}/> Rate teacher
+          </button>
+        ) : (
+          <button
+            className="secondary small"
+            disabled
+            style={{ opacity: 0.55, cursor: 'not-allowed', display: 'inline-flex', alignItems: 'center', gap: 6 }}
+            title="Teacher must start the class before you can review"
+          >
+            <Clock3 size={15}/> Rate teacher (Unmarked until started)
+          </button>
+        )
+      )}
+
+      {studentView && isCompleted && (
+        <div className="request-confirmed">
+          <CheckCircle2 size={16}/>
+          <span>Review submitted. Class completed.</span>
+        </div>
+      )}
+    </div>
 
     {reviewOpen && (
       <ReviewModal
@@ -3232,7 +4031,7 @@ function ClassCard({ item, teacher, auth, studentView, pendingReview, reviewed, 
   </article>
 }
 
-function TeacherClassCard({ item, notify, reload }) {
+function TeacherClassCard({ item, notify, reload, openFloatingChat }) {
   const student = typeof item.student === 'object' ? item.student : null
   const studentProfile = typeof item.studentProfile === 'object' ? item.studentProfile : null
   const studentName =
@@ -3271,6 +4070,31 @@ function TeacherClassCard({ item, notify, reload }) {
       <div className="class-meta"><span>{item.scheduledTime || 'Time not set'}</span><span>৳{item.amount ?? '-'}</span><span>{formatDate(item.createdAt)}</span></div>
     </div>
     <div className="button-row">
+      {!isCompleted && item.status !== 'CANCELLED' && (
+        <button
+          type="button"
+          className="chat-interactive-btn"
+          onClick={() => {
+            openFloatingChat?.({
+              classId: item.id,
+              classStatus: item.status,
+              otherUser: {
+                id: item.studentId,
+                name: studentName,
+                avatar: studentProfile?.profileImage,
+                role: 'Student'
+              }
+            })
+          }}
+          title={`Live chat with ${studentName}`}
+        >
+          <span className="chat-interactive-icon-wrap">
+            <MessageCircle size={15} />
+          </span>
+          <span className="chat-interactive-text">Chat</span>
+        </button>
+      )}
+
       {item.status === 'PAID' && (
         <button className="primary small" onClick={() => action('start')}>
           Start Class
@@ -3415,7 +4239,7 @@ function LoadingCard() { return <div className="loading-card"><Spinner/><span>Lo
 function SkeletonCards({ count = 4 }) { return Array.from({ length: count }).map((_, i) => <div className="skeleton-card" key={i}><i/><b/><span/></div>) }
 function EmptyState({ icon: Icon, title, text }) { return <div className="empty-state"><div className="empty-icon"><Icon size={22}/></div><h3>{title}</h3><p>{text}</p></div> }
 function Modal({ title, children, onClose }) { return <div className="modal-backdrop" onMouseDown={e => e.target === e.currentTarget && onClose()}><div className="modal"><div className="modal-head"><h2>{title}</h2><button className="icon-btn" onClick={onClose}><X size={18}/></button></div>{children}</div></div> }
-function NotificationPanel({ items, markRead, markAll }) { return <div className="notification-panel"><div className="notification-head"><b>Notifications</b><button className="link" onClick={markAll}>Mark all read</button></div>{items.length ? items.slice(0, 7).map(x => <button className={`notification-item ${x.read ? '' : 'unread'}`} key={x.id} onClick={() => markRead(x.id)}><div className="notification-dot"><Bell size={14}/></div><div><b>{x.title}</b><p>{x.text}</p><small>{formatDate(x.createdAt)}</small></div></button>) : <p className="muted notification-empty">No activity notifications yet.</p>}</div> }
+function NotificationPanel({ items, markRead }) { return <div className="notification-panel"><div className="notification-head"><b>Notifications</b></div>{items.length ? items.slice(0, 7).map(x => <button className={`notification-item ${x.read ? '' : 'unread'}`} key={x.id} onClick={() => markRead(x.id)}><div className="notification-dot"><Bell size={14}/></div><div><b>{x.title}</b><p>{x.text}</p><small>{formatDate(x.createdAt)}</small></div></button>) : <p className="muted notification-empty">No activity notifications yet.</p>}</div> }
 
 
 function Brand({ onClick }) {
@@ -3443,3 +4267,13 @@ function displayName(profile, email) { return profile?.fullName?.split(' ')[0] |
 function initials(name) { return (name || 'ST').split(' ').filter(Boolean).slice(0, 2).map(x => x[0]).join('').toUpperCase() }
 function formatDate(value) { if (!value) return '—'; const d = new Date(value); return Number.isNaN(d.getTime()) ? value : d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) }
 function formatTime(value) { if (!value) return ''; const d = new Date(value); return Number.isNaN(d.getTime()) ? '' : d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true }) }
+function formatChatTime(value) {
+  if (!value) return ''
+  const d = new Date(value)
+  if (Number.isNaN(d.getTime())) return ''
+  const now = new Date()
+  const isToday = d.toDateString() === now.toDateString()
+  const timeStr = d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true })
+  if (isToday) return timeStr
+  return `${d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short' })} ${timeStr}`
+}
