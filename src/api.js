@@ -1,7 +1,20 @@
-const BASE = (import.meta.env.VITE_API_BASE_URL || 'http://localhost:8080/api').replace(/\/$/, '')
+const BASE = ((typeof import.meta !== 'undefined' && import.meta?.env?.VITE_API_BASE_URL) || 'http://localhost:8080/api').replace(/\/$/, '')
 
-// In-memory cache for GET requests
+// In-memory cache for GET requests, strictly partitioned by authenticated user identity
 const cache = new Map()
+
+// Session epoch & AbortController to cancel and discard in-flight requests on logout/login
+let currentSessionEpoch = 0
+let activeAbortController = new AbortController()
+
+export function resetApiSession() {
+    currentSessionEpoch++
+    try {
+        activeAbortController.abort()
+    } catch {}
+    activeAbortController = new AbortController()
+    cache.clear()
+}
 
 export function clearApiCache(prefix = '') {
     if (!prefix) {
@@ -13,6 +26,13 @@ export function clearApiCache(prefix = '') {
             cache.delete(key)
         }
     }
+}
+
+function getCacheKey(path, token) {
+    if (!token) return `anon:${path}`
+    const payload = parseJwt(token)
+    const userScope = payload?.sub || payload?.email || payload?.userId || 'auth'
+    return `${userScope}:${path}`
 }
 
 function invalidateForMutation(path) {
@@ -92,25 +112,30 @@ export function isTokenExpired(token) {
 }
 
 async function request(path, options = {}) {
+    const requestEpoch = currentSessionEpoch
     const method = (options.method || 'GET').toUpperCase()
     const isGet = method === 'GET'
+    const token = localStorage.getItem('seutoppers_token')
+
+    // User-scoped cache key prevents any data from User A being served to User B
+    const cacheKey = getCacheKey(path, token)
 
     // Check cache for GET requests unless explicitly skipped
     if (isGet && !options.skipCache) {
-        const cached = cache.get(path)
+        const cached = cache.get(cacheKey)
         if (cached && Date.now() < cached.expiresAt) {
             return cached.data
         }
     }
 
     const headers = new Headers(options.headers || {})
-    const token = localStorage.getItem('seutoppers_token')
 
     if (token) {
         if (isInactive()) {
             localStorage.removeItem('seutoppers_auth')
             localStorage.removeItem('seutoppers_token')
             localStorage.removeItem(LAST_ACTIVITY_KEY)
+            resetApiSession()
             window.dispatchEvent(new CustomEvent('seutoppers-auth-expired', {
                 detail: { message: 'You were logged out due to inactivity.' }
             }))
@@ -121,6 +146,7 @@ async function request(path, options = {}) {
             localStorage.removeItem('seutoppers_auth')
             localStorage.removeItem('seutoppers_token')
             localStorage.removeItem(LAST_ACTIVITY_KEY)
+            resetApiSession()
             window.dispatchEvent(new CustomEvent('seutoppers-auth-expired', {
                 detail: { message: 'You were logged out.' }
             }))
@@ -134,21 +160,49 @@ async function request(path, options = {}) {
         headers.set('Content-Type', 'application/json')
     }
 
-    const response = await fetch(`${BASE}${path}`, {
-        ...options,
-        headers
-    })
+    const signal = options.signal || activeAbortController.signal
+
+    let response
+    try {
+        response = await fetch(`${BASE}${path}`, {
+            ...options,
+            headers,
+            signal
+        })
+    } catch (err) {
+        if (err.name === 'AbortError' || requestEpoch !== currentSessionEpoch) {
+            const abortErr = new Error('Request aborted due to session change')
+            abortErr.name = 'AbortError'
+            throw abortErr
+        }
+        throw err
+    }
+
+    // Discard stale in-flight responses if session changed before response arrived
+    if (requestEpoch !== currentSessionEpoch) {
+        const staleErr = new Error('Request discarded: session changed')
+        staleErr.name = 'AbortError'
+        throw staleErr
+    }
 
     const type = response.headers.get('content-type') || ''
     const data = type.includes('application/json')
         ? await response.json()
         : await response.text()
 
+    // Second check after body parse in case session changed during transfer
+    if (requestEpoch !== currentSessionEpoch) {
+        const staleErr = new Error('Request discarded: session changed')
+        staleErr.name = 'AbortError'
+        throw staleErr
+    }
+
     if (!response.ok) {
         if (response.status === 401 && !path.includes('/auth/login')) {
             localStorage.removeItem('seutoppers_auth')
             localStorage.removeItem('seutoppers_token')
             localStorage.removeItem(LAST_ACTIVITY_KEY)
+            resetApiSession()
             window.dispatchEvent(new CustomEvent('seutoppers-auth-expired', {
                 detail: { message: 'You were logged out.' }
             }))
@@ -165,9 +219,9 @@ async function request(path, options = {}) {
         throw new Error(data.message || data.error || 'Request failed')
     }
 
-    // Cache GET response
+    // Cache GET response strictly under user-scoped cacheKey
     if (isGet && !options.skipCache) {
-        cache.set(path, {
+        cache.set(cacheKey, {
             data,
             expiresAt: Date.now() + (options.cacheTtl || 60000)
         })
@@ -186,6 +240,7 @@ const json = (method, path, body) =>
 
 export const api = {
     clearCache: clearApiCache,
+    resetSession: resetApiSession,
 
     health: () => request('/actuator/health'),
 
@@ -421,7 +476,7 @@ export function fileUrl(value) {
 
     if (typeof value !== 'string') return ''
 
-    if (/^https?:\/\//i.test(value)) return value
+    if (/^(https?|blob|data):/i.test(value)) return value
 
     const origin = BASE.replace(/\/api$/, '')
     return `${origin}${value.startsWith('/') ? value : `/${value}`}`

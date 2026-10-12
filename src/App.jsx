@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react'
+import React, { useEffect, useMemo, useState, useRef } from 'react'
 
 import {
   ArrowRight, Bell, BookOpen, CalendarDays, Check, ChevronDown, ChevronRight, CircleDollarSign,
@@ -7,7 +7,7 @@ import {
   X, Upload, Sparkles, Ban, CheckCircle2, AlertCircle, Eye, Plus, RefreshCw, LockKeyhole, Send,
   Award, HelpCircle, CreditCard, Lock, Minus
 } from 'lucide-react'
-import { api, fileUrl, getChatWebSocketUrl, parseJwt, isTokenExpired, recordActivity, isInactive, LAST_ACTIVITY_KEY } from './api'
+import { api, fileUrl, getChatWebSocketUrl, parseJwt, isTokenExpired, recordActivity, isInactive, LAST_ACTIVITY_KEY, clearApiCache, resetApiSession } from './api'
 
 
 const requestInterestUiStyle = `
@@ -58,10 +58,11 @@ const departments = ['CSE', 'BBA', 'EEE', 'TEXTILE', 'BANGLA', 'ENGLISH', 'ECONO
 const programs = ['BSc', 'MSc', 'BBA', 'MBA', 'BA', 'MA', 'BSS', 'MSS', 'LLB', 'LLM', 'Other']
 const REVIEW_STORAGE_KEY = 'seutoppers_reviews'
 
-function readStoredReviews() {
+function readStoredReviews(userId) {
   try {
     const reviews = JSON.parse(localStorage.getItem(REVIEW_STORAGE_KEY) || '[]')
-    return Array.isArray(reviews) ? reviews : []
+    if (!Array.isArray(reviews)) return []
+    return userId ? reviews.filter(item => item.studentId === userId) : reviews
   } catch {
     return []
   }
@@ -112,18 +113,25 @@ function readAuth() {
 
 function saveAuth(value) {
   if (!value?.token || !value?.userId || !value?.role) {
+    clearAuth()
     throw new Error(value?.message || value?.error || 'Wrong username or password')
   }
 
+  // Reset API session & clear in-memory cache before storing new credentials
+  resetApiSession()
   localStorage.setItem('seutoppers_auth', JSON.stringify(value))
   localStorage.setItem('seutoppers_token', value.token)
   recordActivity()
 }
 
 function clearAuth() {
-  localStorage.removeItem('seutoppers_auth')
-  localStorage.removeItem('seutoppers_token')
-  localStorage.removeItem(LAST_ACTIVITY_KEY)
+  try {
+    localStorage.removeItem('seutoppers_auth')
+    localStorage.removeItem('seutoppers_token')
+    localStorage.removeItem(LAST_ACTIVITY_KEY)
+    localStorage.removeItem(REVIEW_STORAGE_KEY)
+  } catch {}
+  resetApiSession()
 }
 
 function useHashPage(defaultPage) {
@@ -140,9 +148,15 @@ function useHashPage(defaultPage) {
 function useNotifications(auth) {
   const [items, setItems] = useState([])
   const [loading, setLoading] = useState(true)
+  const activeUserIdRef = useRef(auth?.userId)
+
+  useEffect(() => {
+    activeUserIdRef.current = auth?.userId
+  }, [auth?.userId])
 
   const loadNotifications = async () => {
-    if (!auth?.userId || !localStorage.getItem('seutoppers_token')) {
+    const targetUserId = activeUserIdRef.current
+    if (!targetUserId || !localStorage.getItem('seutoppers_token')) {
       setItems([])
       setLoading(false)
       return
@@ -150,11 +164,17 @@ function useNotifications(auth) {
 
     try {
       const data = await api.notifications()
-      setItems(Array.isArray(data) ? data : [])
+      if (activeUserIdRef.current === targetUserId) {
+        setItems(Array.isArray(data) ? data : [])
+      }
     } catch (error) {
-      console.error('Failed to load notifications:', error)
+      if (activeUserIdRef.current === targetUserId && !localStorage.getItem('seutoppers_token')) {
+        setItems([])
+      }
     } finally {
-      setLoading(false)
+      if (activeUserIdRef.current === targetUserId) {
+        setLoading(false)
+      }
     }
   }
 
@@ -219,8 +239,9 @@ function useNotifications(auth) {
   }, [auth?.userId, auth?.token])
 
   useEffect(() => {
+    // Immediately clear notifications when user changes or logs out
+    setItems([])
     if (!auth?.userId) {
-      setItems([])
       setLoading(false)
       return
     }
@@ -287,12 +308,33 @@ function useNotifications(auth) {
 
 function useLoad(loader, deps = []) {
   const [state, setState] = useState({ loading: true, data: null, error: '' })
+  const activeRequestIdRef = useRef(0)
+
   const reload = async () => {
+    const requestId = ++activeRequestIdRef.current
     setState(s => ({ ...s, loading: true, error: '' }))
-    try { setState({ loading: false, data: await loader(), error: '' }) }
-    catch (e) { setState({ loading: false, data: null, error: e.message }) }
+    try {
+      const data = await loader()
+      if (requestId === activeRequestIdRef.current) {
+        setState({ loading: false, data, error: '' })
+      }
+    } catch (e) {
+      if (e.name === 'AbortError' || e.message?.includes('aborted') || e.message?.includes('session changed') || e.message?.includes('Session changed')) {
+        return
+      }
+      if (requestId === activeRequestIdRef.current) {
+        setState({ loading: false, data: null, error: e.message })
+      }
+    }
   }
-  useEffect(() => { reload() }, deps)
+
+  useEffect(() => {
+    reload()
+    return () => {
+      activeRequestIdRef.current++
+    }
+  }, deps)
+
   return { ...state, reload }
 }
 
@@ -418,6 +460,7 @@ export default function App() {
     }
   }, [auth?.token])
   const login = value => {
+    clearAuth()
     saveAuth(value)
     setAuth(value)
     go('dashboard')
@@ -433,7 +476,7 @@ export default function App() {
     <div className="ambient ambient-two" />
     {loading && <div className="top-loader" />}
     {!auth ? <AuthRouter page={page} go={go} login={login} notify={notify} busy={busy} /> :
-        <AppShell auth={auth} page={page} go={go} logout={logout} notify={notify} busy={busy} notifications={notifications} />}
+        <AppShell key={auth.userId} auth={auth} page={page} go={go} logout={logout} notify={notify} busy={busy} notifications={notifications} />}
     {toast && <div className="toast"><CheckCircle2 size={17}/><span>{toast}</span><button onClick={() => setToast('')}><X size={15}/></button></div>}
   </>
 }
@@ -526,11 +569,17 @@ function Login({ go, login, notify, busy }) {
         client_id: import.meta.env.VITE_GOOGLE_CLIENT_ID,
         callback: async response => {
           setError('')
+          clearAuth()
           try {
             const value = await busy(() => api.googleLogin(response.credential))
+            if (!value?.token || !value?.userId) {
+              clearAuth()
+              throw new Error(value?.message || 'Google authentication failed')
+            }
             login(value)
             notify('Welcome to SeuToppers.')
           } catch (e) {
+            clearAuth()
             setError(e.message)
           }
         }
@@ -571,14 +620,17 @@ function Login({ go, login, notify, busy }) {
     }
     if (!password) return setError('Please enter your password.')
     setSubmitting(true)
+    clearAuth()
     try {
       const authData = await busy(() => api.login({ email: trimmedEmail, password }))
-      if (!authData?.token) {
+      if (!authData?.token || !authData?.userId) {
+        clearAuth()
         throw new Error(authData?.message || 'Wrong username or password')
       }
       login(authData)
       notify('Welcome back to SeuToppers.')
     } catch (e) {
+      clearAuth()
       const msg = e.message === 'Invalid authentication response' ? 'Wrong username or password' : e.message
       setError(msg)
     } finally {
@@ -1032,14 +1084,21 @@ function AppShell({ auth, page, go, logout, notify, busy, notifications }) {
   }
 
   useEffect(() => {
+    setProfile(null)
     loadProfile()
     const handler = event => {
-      if (event.detail) setProfile(event.detail)
-      else loadProfile()
+      if (event.detail) {
+        if (typeof event.detail.profileImage === 'string' && event.detail.profileImage.startsWith('blob:')) {
+          return
+        }
+        setProfile(event.detail)
+      } else {
+        loadProfile()
+      }
     }
     window.addEventListener('seutoppers-profile-updated', handler)
     return () => window.removeEventListener('seutoppers-profile-updated', handler)
-  }, [auth.role])
+  }, [auth.userId, auth.role])
 
   const displayName = profile?.fullName || auth.email?.split('@')[0] || 'User'
   const profileImage = profile?.profileImage ? fileUrl(profile.profileImage) : ''
@@ -1924,7 +1983,7 @@ function ServiceTakenPage({ auth, notify, openFloatingChat }) {
   const teachers = useLoad(api.teachers, [])
   const payments = useLoad(api.myPayments, [])
   const myReviews = useLoad(api.myReviews, [auth?.userId])
-  const [reviews, setReviews] = useState(readStoredReviews)
+  const [reviews, setReviews] = useState(() => readStoredReviews(auth?.userId))
   const [activePaymentForPay, setActivePaymentForPay] = useState(null)
   const [cancellingId, setCancellingId] = useState(null)
 
@@ -1944,7 +2003,7 @@ function ServiceTakenPage({ auth, notify, openFloatingChat }) {
     await data.reload()
     await payments.reload()
     await myReviews.reload()
-    setReviews(readStoredReviews())
+    setReviews(readStoredReviews(auth?.userId))
   }
 
   const handlePay = (classItem, teacher) => {
@@ -2511,12 +2570,12 @@ function FloatingMessengerWindow({ activeChat, isMinimized, onToggleMinimize, on
     return () => {
       mounted = false
     }
-  }, [activeChat?.classId])
+  }, [activeChat?.classId, auth?.userId])
 
   // WebSocket Live Connection
   useEffect(() => {
     const token = localStorage.getItem('seutoppers_token')
-    if (!token || !activeChat?.classId) return
+    if (!token || !activeChat?.classId || !auth?.userId) return
 
     let ws = null
     let reconnectTimeout = null
@@ -2559,7 +2618,7 @@ function FloatingMessengerWindow({ activeChat, isMinimized, onToggleMinimize, on
       clearTimeout(reconnectTimeout)
       try { ws?.close() } catch {}
     }
-  }, [activeChat?.classId])
+  }, [activeChat?.classId, auth?.userId])
 
   const handleSend = async (e) => {
     e?.preventDefault()
@@ -3042,10 +3101,104 @@ function TeacherApplyPage({ notify, busy, isBanned }) {
 }
 
 function ProfilePage({ auth, notify, busy }) {
-  const student = useLoad(api.studentProfile, []), completion = useLoad(api.completion, []), teacher = useLoad(auth.role === 'TEACHER' ? api.teacherProfile : async () => null, [auth.role])
-  const [form, setForm] = useState({ fullName: '', phone: '', profileImage: '', department: '', program: '', batch: '', location: '', bio: '', qualification: '', experience: '', subjects: '', hourlyRate: '', teachingMode: '', availability: '' }), [file, setFile] = useState(null), [error, setError] = useState(''), [saving, setSaving] = useState(false)
-  useEffect(() => { const p = student.data || {}; const t = teacher.data || {}; setForm({ fullName: p.fullName || '', phone: p.phone || '', profileImage: p.profileImage || '', department: p.department || '', program: p.program || '', batch: p.batch || '', location: p.location || '', bio: p.bio || '', qualification: t.qualification || '', experience: t.experience || '', subjects: (t.subjects || []).join(', '), hourlyRate: t.hourlyRate || '', teachingMode: t.teachingMode || '', availability: t.availability || '' }) }, [student.data, teacher?.data])
+  const student = useLoad(api.studentProfile, [])
+  const completion = useLoad(api.completion, [])
+  const teacher = useLoad(auth.role === 'TEACHER' ? api.teacherProfile : async () => null, [auth.role])
+  const [form, setForm] = useState({ fullName: '', phone: '', profileImage: '', department: '', program: '', batch: '', location: '', bio: '', qualification: '', experience: '', subjects: '', hourlyRate: '', teachingMode: '', availability: '' })
+  const [file, setFile] = useState(null)
+  const [previewUrl, setPreviewUrl] = useState(null)
+  const [error, setError] = useState('')
+  const [saving, setSaving] = useState(false)
+  const fileInputRef = useRef(null)
+  const previewUrlRef = useRef(null)
+
+  useEffect(() => {
+    previewUrlRef.current = previewUrl
+  }, [previewUrl])
+
+  useEffect(() => {
+    return () => {
+      if (previewUrlRef.current) {
+        URL.revokeObjectURL(previewUrlRef.current)
+      }
+    }
+  }, [])
+
+  useEffect(() => {
+    const p = student.data || {}
+    const t = teacher.data || {}
+    setForm({
+      fullName: p.fullName || '',
+      phone: p.phone || '',
+      profileImage: p.profileImage || '',
+      department: p.department || '',
+      program: p.program || '',
+      batch: p.batch || '',
+      location: p.location || '',
+      bio: p.bio || '',
+      qualification: t.qualification || '',
+      experience: t.experience || '',
+      subjects: (t.subjects || []).join(', '),
+      hourlyRate: t.hourlyRate || '',
+      teachingMode: t.teachingMode || '',
+      availability: t.availability || ''
+    })
+  }, [student.data, teacher?.data])
+
   const set = (k, v) => setForm(x => ({ ...x, [k]: v }))
+
+  const cancelPreview = () => {
+    if (previewUrl) {
+      URL.revokeObjectURL(previewUrl)
+      setPreviewUrl(null)
+    }
+    setFile(null)
+    if (fileInputRef.current) {
+      fileInputRef.current.value = ''
+    }
+  }
+
+  const handleDiscardOrRefresh = () => {
+    cancelPreview()
+    setError('')
+    const p = student.data || {}
+    const t = teacher.data || {}
+    setForm({
+      fullName: p.fullName || '',
+      phone: p.phone || '',
+      profileImage: p.profileImage || '',
+      department: p.department || '',
+      program: p.program || '',
+      batch: p.batch || '',
+      location: p.location || '',
+      bio: p.bio || '',
+      qualification: t.qualification || '',
+      experience: t.experience || '',
+      subjects: (t.subjects || []).join(', '),
+      hourlyRate: t.hourlyRate || '',
+      teachingMode: t.teachingMode || '',
+      availability: t.availability || ''
+    })
+    student.reload()
+    if (auth.role === 'TEACHER') teacher.reload?.()
+  }
+
+  const handleFileChange = e => {
+    const selectedFile = e.target.files?.[0] || null
+    if (previewUrl) {
+      URL.revokeObjectURL(previewUrl)
+      setPreviewUrl(null)
+    }
+    if (selectedFile) {
+      const url = URL.createObjectURL(selectedFile)
+      setFile(selectedFile)
+      setPreviewUrl(url)
+    } else {
+      setFile(null)
+      setPreviewUrl(null)
+    }
+  }
+
   const save = async e => {
     e.preventDefault()
     setError('')
@@ -3074,19 +3227,51 @@ function ProfilePage({ auth, notify, busy }) {
     setSaving(true)
     try {
       let image = form.profileImage
-      if (file) image = await api.uploadProfile(file)
-      const studentPayload = { fullName: form.fullName.trim(), phone: cleanPhone, profileImage: image, department: form.department, program: form.program, batch: form.batch.trim(), location: form.location?.trim() || '', bio: form.bio?.trim() || '' }
-      await api.updateStudentProfile(studentPayload)
-      if (auth.role === 'TEACHER') {
-        await api.updateTeacherProfile({ ...studentPayload, qualification: form.qualification?.trim(), experience: form.experience?.trim(), subjects: form.subjects.split(',').map(x => x.trim()).filter(Boolean), hourlyRate: Number(form.hourlyRate) || null, teachingMode: form.teachingMode?.trim(), availability: form.availability?.trim() })
+      if (file) {
+        image = await api.uploadProfile(file)
       }
-      setForm(x => ({ ...x, phone: cleanPhone, profileImage: image }))
+      const studentPayload = {
+        fullName: form.fullName.trim(),
+        phone: cleanPhone,
+        profileImage: image,
+        department: form.department,
+        program: form.program,
+        batch: form.batch.trim(),
+        location: form.location?.trim() || '',
+        bio: form.bio?.trim() || ''
+      }
+      const updatedStudent = await api.updateStudentProfile(studentPayload)
+      if (auth.role === 'TEACHER') {
+        await api.updateTeacherProfile({
+          ...studentPayload,
+          qualification: form.qualification?.trim(),
+          experience: form.experience?.trim(),
+          subjects: form.subjects.split(',').map(x => x.trim()).filter(Boolean),
+          hourlyRate: Number(form.hourlyRate) || null,
+          teachingMode: form.teachingMode?.trim(),
+          availability: form.availability?.trim()
+        })
+      }
+      const finalImage = updatedStudent?.profileImage || image
+
+      if (previewUrl) {
+        URL.revokeObjectURL(previewUrl)
+        setPreviewUrl(null)
+      }
       setFile(null)
+      if (fileInputRef.current) fileInputRef.current.value = ''
+
+      setForm(x => ({ ...x, phone: cleanPhone, profileImage: finalImage }))
       await student.reload()
       await completion.reload()
       if (auth.role === 'TEACHER') await teacher.reload()
+
       window.dispatchEvent(new CustomEvent('seutoppers-profile-updated', {
-        detail: { ...studentPayload }
+        detail: {
+          ...(student.data || {}),
+          ...studentPayload,
+          profileImage: finalImage
+        }
       }))
       notify('Profile saved successfully.')
     } catch (e) {
@@ -3095,32 +3280,108 @@ function ProfilePage({ auth, notify, busy }) {
       setSaving(false)
     }
   }
-  const image = file ? URL.createObjectURL(file) : fileUrl(form.profileImage)
-  return <div className="page-stack profile-page"><PageHero title="My profile" subtitle="Keep your student information complete. Teachers can also manage their teaching identity here."/><form onSubmit={save}><div className="profile-layout"><section className="panel"><div className="profile-photo-row"><div className="profile-avatar xl">{image ? <img src={image} alt="Profile"/> : initials(form.fullName)}</div><div><h3>{form.fullName || 'Your profile'}</h3><p className="muted">{completion.data || 0}% complete</p><label className="upload-button"><Upload size={16}/> Upload profile picture<input type="file" accept="image/png,image/jpeg,image/webp" onChange={e => {
-    const selectedFile = e.target.files?.[0] || null
-    setFile(selectedFile)
-    if (selectedFile) {
-      const previewUrl = URL.createObjectURL(selectedFile)
-      window.dispatchEvent(new CustomEvent('seutoppers-profile-updated', {
-        detail: { ...student.data, fullName: form.fullName, profileImage: previewUrl }
-      }))
-    }
-  }}/></label><small className="hint">PNG, JPG or WEBP</small></div></div><div className="form-grid">
-    <Field label="Full name" value={form.fullName} onChange={e => set('fullName', e.target.value)} required/>
-    <div>
-      <Field label="Phone (11 digits, numbers only)" value={form.phone} onChange={e => set('phone', e.target.value.replace(/\D/g, '').slice(0, 11))} placeholder="01XXXXXXXXX" required/>
-      <div className={`phone-field-info ${form.phone.length === 11 && form.phone.startsWith('01') ? 'valid' : form.phone.length > 0 ? 'invalid' : ''}`}>
-        <span>{form.phone.length === 11 && form.phone.startsWith('01') ? '✓ Valid Bangladeshi number' : 'Must be 11 digits starting with 01'}</span>
-        <b>{form.phone.length}/11</b>
-      </div>
+
+  const image = previewUrl || (form.profileImage ? fileUrl(form.profileImage) : '')
+
+  return (
+    <div className="page-stack profile-page">
+      <PageHero
+        title="My profile"
+        subtitle="Keep your student information complete. Teachers can also manage their teaching identity here."
+      />
+      <form onSubmit={save}>
+        <div className="profile-layout">
+          <section className="panel">
+            <div className="profile-photo-row">
+              <div className="profile-avatar xl">
+                {image ? <img src={image} alt="Profile" /> : initials(form.fullName)}
+              </div>
+              <div>
+                <h3>{form.fullName || 'Your profile'}</h3>
+                <p className="muted">{completion.data || 0}% complete</p>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                  <label className="upload-button">
+                    <Upload size={16} /> Upload profile picture
+                    <input
+                      ref={fileInputRef}
+                      type="file"
+                      accept="image/png,image/jpeg,image/webp"
+                      onChange={handleFileChange}
+                    />
+                  </label>
+                  {file && (
+                    <button
+                      type="button"
+                      className="ghost-button"
+                      style={{ fontSize: '0.8rem', color: 'var(--muted)', display: 'inline-flex', alignItems: 'center', gap: 4, background: 'none', border: '1px solid var(--border)', borderRadius: 8, padding: '6px 10px', cursor: 'pointer' }}
+                      onClick={cancelPreview}
+                    >
+                      <X size={14} /> Cancel new photo
+                    </button>
+                  )}
+                </div>
+                <small className="hint">PNG, JPG or WEBP</small>
+              </div>
+            </div>
+            <div className="form-grid">
+              <Field label="Full name" value={form.fullName} onChange={e => set('fullName', e.target.value)} required />
+              <div>
+                <Field label="Phone (11 digits, numbers only)" value={form.phone} onChange={e => set('phone', e.target.value.replace(/\D/g, '').slice(0, 11))} placeholder="01XXXXXXXXX" required />
+                <div className={`phone-field-info ${form.phone.length === 11 && form.phone.startsWith('01') ? 'valid' : form.phone.length > 0 ? 'invalid' : ''}`}>
+                  <span>{form.phone.length === 11 && form.phone.startsWith('01') ? '✓ Valid Bangladeshi number' : 'Must be 11 digits starting with 01'}</span>
+                  <b>{form.phone.length}/11</b>
+                </div>
+              </div>
+              <SelectField label="Department" value={form.department} onChange={e => set('department', e.target.value)} options={departments} />
+              <Field label="Batch" value={form.batch} onChange={e => set('batch', e.target.value)} placeholder="e.g. 54" required />
+              <SelectField label="Program" value={form.program} onChange={e => set('program', e.target.value)} options={programs} />
+              <Field label="Location (Optional)" value={form.location} onChange={e => set('location', e.target.value)} placeholder="e.g. Tejgaon, Dhaka" />
+            </div>
+            <TextArea label="Bio (Optional)" value={form.bio} onChange={e => set('bio', e.target.value)} placeholder="Tell the SEU community a little about you (optional)." />
+          </section>
+          <aside className="profile-side">
+            <section className="panel completion-card">
+              <span className="eyebrow">PROFILE COMPLETION</span>
+              <div className="completion-number">{completion.data || 0}%</div>
+              <div className="progress"><i style={{ width: `${completion.data || 0}%` }} /></div>
+              <p>{(completion.data || 0) >= 80 ? 'You can post help requests and apply to become a teacher.' : 'Reach 80% to unlock help requests and teacher applications.'}</p>
+            </section>
+            {auth.role === 'TEACHER' && (
+              <section className="panel">
+                <SectionHeading title="Teaching profile" subtitle="Visible to students when they visit your teacher profile." />
+                <div className="form">
+                  <Field label="Qualification" value={form.qualification} onChange={e => set('qualification', e.target.value)} />
+                  <Field label="Experience" value={form.experience} onChange={e => set('experience', e.target.value)} />
+                  <Field label="Subjects" value={form.subjects} onChange={e => set('subjects', e.target.value)} placeholder="Java, DBMS, AI" />
+                  <div className="form-grid">
+                    <Field label="Hourly rate" type="number" value={form.hourlyRate} onChange={e => set('hourlyRate', e.target.value)} />
+                    <Field label="Teaching mode" value={form.teachingMode} onChange={e => set('teachingMode', e.target.value)} placeholder="Online / Offline" />
+                  </div>
+                  <Field label="Availability" value={form.availability} onChange={e => set('availability', e.target.value)} placeholder="Evening, weekends" />
+                </div>
+              </section>
+            )}
+            <section className="panel privacy-card">
+              <LockKeyhole size={18} />
+              <div>
+                <b>Profile privacy</b>
+                <p>Best-effort browser privacy is enabled on this page. Browsers cannot guarantee screenshot prevention.</p>
+              </div>
+            </section>
+          </aside>
+        </div>
+        <div className="save-row">
+          <ErrorBox error={error} />
+          <button className="secondary" type="button" onClick={handleDiscardOrRefresh}>
+            <RefreshCw size={16} /> Refresh
+          </button>
+          <button className="primary" disabled={saving}>
+            {saving ? <Spinner /> : <><Check size={16} /> Save profile</>}
+          </button>
+        </div>
+      </form>
     </div>
-    <SelectField label="Department" value={form.department} onChange={e => set('department', e.target.value)} options={departments}/>
-    <Field label="Batch" value={form.batch} onChange={e => set('batch', e.target.value)} placeholder="e.g. 54" required/>
-    <SelectField label="Program" value={form.program} onChange={e => set('program', e.target.value)} options={programs}/>
-    <Field label="Location (Optional)" value={form.location} onChange={e => set('location', e.target.value)} placeholder="e.g. Tejgaon, Dhaka"/>
-  </div>
-  <TextArea label="Bio (Optional)" value={form.bio} onChange={e => set('bio', e.target.value)} placeholder="Tell the SEU community a little about you (optional)."/>
-  </section><aside className="profile-side"><section className="panel completion-card"><span className="eyebrow">PROFILE COMPLETION</span><div className="completion-number">{completion.data || 0}%</div><div className="progress"><i style={{ width: `${completion.data || 0}%` }}/></div><p>{(completion.data || 0) >= 80 ? 'You can post help requests and apply to become a teacher.' : 'Reach 80% to unlock help requests and teacher applications.'}</p></section>{auth.role === 'TEACHER' && <section className="panel"><SectionHeading title="Teaching profile" subtitle="Visible to students when they visit your teacher profile."/><div className="form"><Field label="Qualification" value={form.qualification} onChange={e => set('qualification', e.target.value)}/><Field label="Experience" value={form.experience} onChange={e => set('experience', e.target.value)}/><Field label="Subjects" value={form.subjects} onChange={e => set('subjects', e.target.value)} placeholder="Java, DBMS, AI"/><div className="form-grid"><Field label="Hourly rate" type="number" value={form.hourlyRate} onChange={e => set('hourlyRate', e.target.value)}/><Field label="Teaching mode" value={form.teachingMode} onChange={e => set('teachingMode', e.target.value)} placeholder="Online / Offline"/></div><Field label="Availability" value={form.availability} onChange={e => set('availability', e.target.value)} placeholder="Evening, weekends"/></div></section>}<section className="panel privacy-card"><LockKeyhole size={18}/><div><b>Profile privacy</b><p>Best-effort browser privacy is enabled on this page. Browsers cannot guarantee screenshot prevention.</p></div></section></aside></div><div className="save-row"><ErrorBox error={error}/><button className="secondary" type="button" onClick={() => student.reload()}><RefreshCw size={16}/> Refresh</button><button className="primary" disabled={saving}>{saving ? <Spinner/> : <><Check size={16}/> Save profile</>}</button></div></form></div>
+  )
 }
 
 function AdminPage({ page, auth, go, notify, busy, notifications }) {
